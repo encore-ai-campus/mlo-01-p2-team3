@@ -103,7 +103,7 @@ Bronze에 보존하는 API 응답 메타데이터·`run_id`와, 파이프라인 
 | 배치 ID(`run_id`) | Bronze 원본 문서 최상위 및 `hr_pipeline_runs` |
 | 실행 시각, 상태, 증분 구간 | `hr_pipeline_runs` |
 | 현재 cursor, `next_refresh_at` | `hr_pipeline_control` |
-| 페이지 순서, 커서 해시, 응답 해시 | `hr_pipeline_pages` |
+| 페이지 순서, cursor, next_cursor, 응답 해시 | `hr_pipeline_pages` |
 | 오류·검토 상태 | `hr_review_queue` |
 | Bronze–Silver–Gold 연결과 검토·반영 근거(후속 연동 단계) | `hr_lineage_links` |
 
@@ -117,3 +117,25 @@ Bronze에 보존하는 API 응답 메타데이터·`run_id`와, 파이프라인 
 - 동일 응답을 다시 받아도 중복 반영되지 않는다.
 - 배치·페이지·응답 해시를 조회할 수 있다.
 - 실패한 페이지의 cursor는 건너뛰지 않으며, 마지막 성공 페이지 상태를 유지한다.
+
+## 8. 원문 파일과 로그 분리
+
+MongoDB Bronze와 별도로 수집 당시의 원문 페이지 파일을 보관할 수 있다.
+
+~~~text
+data/
+└─ bronze/
+   └─ source=hr_api/
+      └─ ingest_date=YYYY-MM-DD/
+         └─ run_id=<배치 ID>/
+            └─ raw/
+               ├─ page_0001.json
+               └─ page_0001.csv
+~~~
+
+- JSON 파일은 API 페이지 원문을 저장하고, CSV 파일은 같은 페이지를 표 형태로 확인하기 위한 보조 사본이다.
+- 파일과 manifest에는 run_id, 페이지 번호, 항목 수, 파일 크기, SHA-256을 기록한다.
+- 원문 파일과 MongoDB Bronze 문서는 덮어쓰지 않는다.
+- pipeline.log와 hr_pipeline_pages에는 실행 요약·HTTP 상태·시각·지연 시간·응답 해시만 남긴다.
+- API 키와 응답 본문은 실행 로그·페이지 이력에 기록하지 않는다. 응답 본문은 원문 보관 위치에서만 확인한다.
+- 원문 파일·manifest 누락 검사는 verify_bronze_archive.py로 수행하고, 결과를 reports/bronze_archive에 저장한다.

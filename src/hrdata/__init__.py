@@ -1,0 +1,1 @@
+"""Django HR data application."""

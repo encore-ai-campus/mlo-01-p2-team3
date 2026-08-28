@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}조직도 | HR 데이터{% endblock %}
+{% block breadcrumb %}조직도{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">조직 계층</p><h1>조직도</h1><p class="desc">Gold의 parent_area_id 관계를 기준으로 조직을 연결합니다.</p></div><a class="button secondary" href="{% url 'area_list' %}">조직 목록</a></div>
+<section class="panel"><form class="filters" method="get" style="grid-template-columns:1fr auto;"><div><label for="top_area_id">최상위 조직 ID (선택)</label><input id="top_area_id" name="top_area_id" value="{{ top_area_id }}" placeholder="전체 조직"></div><button class="button" type="submit">조직도 갱신</button></form></section>
+<section class="panel" style="margin-top:18px;"><h2>조직 계층 <span class="muted" style="font-size:12px;font-weight:400;">· {{ area_count }}개 조직</span></h2><div class="tree" style="margin-top:14px;">{% if tree %}{% include "hrdata/_tree_node.html" with nodes=tree only %}{% else %}<div class="empty">표시할 조직이 없습니다.</div>{% endif %}</div></section>
+{% endblock %}

@@ -1,0 +1,17 @@
+# 웹 애플리케이션
+Django>=4.2,<6.0
+
+# API 호출
+requests>=2.31,<3.0
+
+# 데이터베이스
+pymongo>=4.6,<5.0
+mysqlclient>=2.2,<3.0
+
+# 환경변수·YAML 규칙
+python-dotenv>=1.0,<2.0
+PyYAML>=6.0,<7.0
+
+# 테스트
+pytest>=8.0,<9.0
+pytest-django>=4.8,<5.0

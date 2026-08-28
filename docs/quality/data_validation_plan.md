@@ -128,7 +128,7 @@ Silver 검증 실패가 API 호출이나 Bronze 원본 저장을 수정하지 �
 ```json
 {
   "run_id": "<배치 ID>",
-  "rule_version": "normalization-v1.2",
+  "rule_version": "normalization-v1.5",
   "status": "COMPLETED",
   "counts": {
     "pages": 0,
@@ -174,7 +174,7 @@ py scripts\run_silver_once.py --limit <전체건수> --write
 테스트는 `N passed`로 종료되어야 한다. Silver 확인 명령은 `정제된 건수`와
 `정제되지 않은 건수`를 출력한다. `--all --write`는 사용하지 않는다.
 
-운영 스케줄러는 `scripts\run_pipeline_30m.ps1`을 실행할 수 있다. 실행 주기와 방법은
+운영 스케줄러는 `scripts\run_pipeline_5m.ps1`을 실행할 수 있다. 실행 주기와 방법은
 운영 환경 확정 후 결정하며, 새 Bronze 건수만 `run_silver_once.py --latest N --write`로 처리한다.
 최초 전체 Silver 저장은 수동으로 실행한다.
 
@@ -188,3 +188,43 @@ py scripts\run_silver_once.py --limit <전체건수> --write
 6. Bronze에서 정규화·도메인·중복·관계 검증을 재실행한다.
 7. 통과한 결과만 Silver에 재저장하고, 실패 데이터는 Review Queue에 유지한다.
 8. 검토자·결정·수정·재처리 결과를 이력으로 남긴다.
+
+## 12. Django·CSV 검증
+
+| 검사 | 기대 결과 |
+|---|---|
+| 조직 목록 열 확인 | 조직코드와 조직명이 별도 열 |
+| 담당자 목록 열 확인 | 담당자코드와 담당자명이 별도 열 |
+| 검색 CSV | 같은 검색 조건의 Gold 행만 포함 |
+| 전체 조직 CSV | /hrdata/areas/export.csv?all=1로 전체 Gold 행 포함 |
+| 전체 담당자 CSV | /hrdata/managers/export.csv?all=1로 전체 Gold 행 포함 |
+| 표시 정리 | 공백·승인된 반복 단어만 화면에서 정리하고 DB 값은 유지 |
+| 날짜 표시 | 화면·CSV에 초 단위까지만 표시하고 키·행 수는 유지 |
+
+CSV는 브라우저에 표시된 일부 행을 복사해 만들지 않고 서버가 Gold 조회 결과로 만든다.
+
+## 13. 원문 보관 검증
+
+- API 페이지 원문 JSON과 보조 CSV가 run_id별 raw 디렉터리에 존재하는지 확인한다.
+- manifest의 항목 수·파일 크기·SHA-256과 실제 파일이 일치하는지 확인한다.
+- 파일 또는 manifest가 없으면 Bronze 완료로 표시하지 않는다.
+- 파싱 실패 페이지도 삭제하지 않고 실패 코드와 함께 보존한다.
+- verify_bronze_archive.py 실행 결과를 품질 보고서에 첨부한다.
+
+## 14. 현재 실행 명령
+
+프로젝트 루트에서 실행한다.
+
+~~~powershell
+py -m pytest -q tests\data_pipeline
+py scripts\run_pipeline.py
+py scripts\run_silver_once.py --pending --drain --write
+py scripts\run_gold_once.py --write
+py scripts\run_gold_once.py --partial --write
+py scripts\verify_bronze_archive.py
+py scripts\report_silver_quality.py
+py src\manage.py check
+~~~
+
+Gold의 --write는 전체 품질 게이트 통과 시 사용하고, 일부 정상 테이블만 먼저 적재할 때는
+--partial --write를 사용한다. 스케줄러 명령과 실행 순서는 [실행 매뉴얼](../operations_runbook.md)을 따른다.

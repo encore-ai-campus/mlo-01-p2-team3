@@ -1,0 +1,50 @@
+rule_version: gold-v1.0
+source_collection: hr_silver_standard_records
+staging_table: stg_hr_standard_records
+load_history_table: hr_gold_load_batch
+
+tables:
+  hr_area:
+    primary_key: [area_id]
+    required_fields:
+      - area_id
+      - area_name
+      - top_area_id
+      - top_area_name
+      - top_area_level
+  hr_manager:
+    primary_key: [manager_id]
+    required_fields:
+      - manager_id
+      - manager_name
+      - manager_active_yn
+  hr_area_manager_assignment:
+    primary_key: [area_id]
+    required_fields:
+      - area_id
+      - manager_id
+    foreign_keys:
+      area_id: hr_area.area_id
+      manager_id: hr_manager.manager_id
+
+relationship:
+  root_condition: area_id == top_area_id
+  root_parent_allowed: [null, self]
+  child_parent_required: true
+  child_parent_must_exist: true
+  child_self_parent_allowed: false
+
+load_policy:
+  review_blocker_field: blocks_gold
+  wildcard_blocker: "*"
+  one_manager_many_areas: true
+  one_area_many_managers: false
+  transaction: all_or_nothing
+  # 기본은 엄격 검사이며, --partial을 명시할 때만 정상 행을 먼저 적재한다.
+  partial_load:
+    enabled: true
+    flag: "--partial"
+    optional_conflict_action: NULL
+    preserve_conflict_in_review: true
+  failed_load: keep_existing_gold
+  latest_value_auto_selection: false

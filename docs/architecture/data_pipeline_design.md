@@ -5,8 +5,9 @@
 ```text
 스케줄러
   ↓
-레거시 API → 계약 검사 → MongoDB Bronze → 매핑·정규화 → 도메인·중복 검증 → MongoDB Silver → MySQL Gold → Django
-                                                └─ 어느 단계든 실패 → 검토 대기
+레거시 API → 계약 검사 → MongoDB Bronze → 메모리 매핑·정규화 → 도메인·중복 검증 → MongoDB Silver → MySQL Gold → Django
+                  └─ 수집·계약 실패 → 페이지/실행 이력
+                                                 └─ 정규화·검증 실패 → hr_review_queue
 ```
 
 API 응답 메타데이터와 API 본문 데이터는 Bronze에 그대로 보관한다. 응답 메타데이터의 `record_id`,
@@ -127,6 +128,7 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 |---|---|---|
 | `NORMALIZATION` | 매핑·ID·날짜 등 형식 표준화 실패 | Silver에 저장하지 않고 검토 큐 보관 |
 | `CANDIDATE_VALIDATION` | 메모리상의 정규화 결과에 대한 도메인·중복·조직 관계 검증 실패 | Silver에 저장하지 않고 검토 큐 보관 |
+| `QUALITY_WARNING` | Silver 저장은 가능하지만 품질 경고를 남긴 건 | Silver 저장 및 경고 이력 |
 | `UNKNOWN` | 기존 문서 등 단계 정보가 없음 | 원본 연결 후 확인 |
 
 ## 9. 제어 정보
@@ -155,3 +157,16 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 - 표준화 실패와 도메인 검증 실패가 구분된다.
 - 배치·규칙·검토·재처리 이력을 조회할 수 있다.
 - 실행 결과 JSON 요약이 생성되고, 배치 상태·건수는 실행 이력에서 확인된다.
+
+## 12. 현재 Django 출력 연결
+
+Django의 repository는 MySQL Gold 테이블만 읽고 service가 화면용 결과를 만든다.
+
+- 조직 목록은 area_id와 area_name을 분리해 표시하고, 부모·최상위 조직과 담당자 정보를 함께 제공한다.
+- 담당자 목록은 manager_id와 manager_name을 분리해 표시하고, 부서·직급·재직 상태·담당 조직 수를 제공한다.
+- 조직 CSV는 /hrdata/areas/export.csv, 담당자 CSV는 /hrdata/managers/export.csv에서 제공한다.
+- 각 주소에 all=1을 주면 현재 검색 조건과 페이지 제한을 무시하고 전체 Gold 결과를 내려받는다.
+- 화면·CSV의 이름 반복 단어와 공백 정리는 표시 단계에서만 수행한다. 데이터베이스 값, 키, 건수는 바꾸지 않는다.
+- CSV 생성은 브라우저에 보이는 현재 페이지의 DOM을 복사하지 않고 서버가 Gold 조회 결과로 직접 만든다.
+
+현재 구현의 실행·검증 명령은 [실행 매뉴얼](../operations_runbook.md)에 정리한다.

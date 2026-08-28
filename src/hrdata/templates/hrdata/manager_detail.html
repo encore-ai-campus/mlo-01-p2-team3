@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% load display_filters %}
+{% block title %}{{ manager.manager_name }} | HR 데이터{% endblock %}
+{% block breadcrumb %}담당자 상세{% endblock %}
+{% block content %}
+<div class="detail-head"><div><p class="eyebrow">담당자 상세</p><h1>{{ manager.manager_name|compact }}</h1><span class="detail-id">{{ manager.manager_id|compact }}</span></div><a class="button secondary" href="{% url 'manager_list' %}">← 목록</a></div>
+<section class="grid2"><article class="panel"><h2>담당자 기본 정보</h2><dl class="detail-grid"><div><dt>담당자 ID</dt><dd class="mono">{{ manager.manager_id|compact }}</dd></div><div><dt>담당자명</dt><dd>{{ manager.manager_name|compact }}</dd></div><div><dt>부서</dt><dd>{{ manager.department_name|compact|default:"—" }}</dd></div><div><dt>직급</dt><dd>{{ manager.position_name|compact|default:"—" }}</dd></div><div><dt>입사일</dt><dd>{{ manager.manager_hire_at|date:"Y-m-d H:i"|default:"—" }}</dd></div><div><dt>재직 여부</dt><dd>{% if manager.manager_active_yn == 'Y' %}<span class="tag ok">재직</span>{% else %}<span class="tag warn">비재직</span>{% endif %}</dd></div></dl></article><aside class="panel"><h2>담당 조직 <span class="muted" style="font-size:12px;font-weight:400;">· {{ areas|length }}개</span></h2>{% if areas %}<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>조직코드</th><th>조직명</th><th>최상위 조직</th></tr></thead><tbody>{% for area in areas %}<tr><td class="mono">{{ area.area_id|compact }}</td><td><a class="link" href="{% url 'area_detail' area.area_id %}">{{ area.area_name|area_display }}</a></td><td>{{ area.top_area_name|area_display|default:"—" }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty">담당 조직이 없습니다.</div>{% endif %}</aside></section>
+{% endblock %}

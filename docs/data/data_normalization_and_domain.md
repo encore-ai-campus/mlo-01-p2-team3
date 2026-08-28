@@ -1,7 +1,7 @@
 # 데이터 정규화 및 도메인 규칙
 
 - 문서 ID: `NORM-HR-001`
-- 기준 버전: `normalization-v1.2`
+- 기준 버전: `normalization-v1.5`
 - 적용 대상: 레거시 API 응답 메타데이터와 API 본문 데이터의 원문 → 정규화·검증 → Silver 표준 업무 필드 15개
 
 ## 1. 핵심 원칙
@@ -184,6 +184,7 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 |---|---|---|
 | `NORMALIZATION` | 매핑·ID·날짜 등 형식 표준화 실패 | Silver에 저장하지 않음 |
 | `CANDIDATE_VALIDATION` | 메모리상의 정규화 결과에 대한 도메인·중복·조직 관계 검증 실패 | Silver에 저장하지 않음 |
+| `QUALITY_WARNING` | Silver 저장은 가능하지만 품질 경고를 남긴 건 | Silver 저장, 경고 이력 기록 |
 | `UNKNOWN` | 이전 문서 등 단계 정보가 없는 검토 건 | 원본 연결 후 확인 |
 
 두 유형 모두 `bronze_id`, 오류 코드와 함께 저장한다. Bronze 원본은 삭제하지 않으며,
@@ -210,7 +211,7 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 
 1. `review.json`에서 오류 필드와 원본 값을 확인한다.
 2. 담당자가 승인·반려 결과와 검토 메모를 기록한다.
-3. 반복되는 정상 값이면 `domains.yaml`을 수동 수정하고 규칙 버전을 `normalization-v1.2`에서 다음 버전으로 올린다.
+3. 반복되는 정상 값이면 `domains.yaml`을 수동 수정하고 규칙 버전을 `normalization-v1.5`에서 다음 버전으로 올린다.
 4. 예외 한 건의 수정 내용은 검토 메모로 기록하며 YAML 허용 목록에는 추가하지 않는다.
 5. Bronze 원본에서 정규화·도메인 검증을 재실행한다.
 6. 검증을 통과한 결과만 Silver에 저장하고, 다시 실패한 데이터는 Review Queue에 유지한다.
@@ -226,3 +227,22 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 - 동일 ID API 본문 데이터 충돌을 검토 대상으로 구분한다.
 - 서로 다른 배치의 필드를 섞은 Silver 레코드가 없다.
 - 사용한 정규화 규칙 버전과 재처리 결과를 실행 이력에서 확인할 수 있다.
+
+## 11. 화면 표시 전용 정리
+
+정규화 규칙은 Silver와 Gold에 저장되는 표준값을 정하는 규칙이고, 화면 표시 규칙은 별도로 적용한다.
+
+- Silver·Gold의 area_name과 manager_name은 원래 표준값을 보존한다.
+- Django 화면과 CSV에서만 앞뒤 공백을 제거한다.
+- 승인된 반복 단어가 연속으로 붙은 경우에만 한 번으로 줄인다. 예: 고객서비스서비스 → 고객서비스.
+- 이름 뒤의 숫자나 실제 코드처럼 보이는 suffix는 삭제하지 않는다. 예: 자산관리관리 20 → 자산관리 20.
+- 표시용 정리로 area_id, manager_id, 행 수, 저장값을 변경하거나 합치지 않는다.
+
+이 규칙은 데이터 정규화 결과나 검토 큐 판정에 영향을 주지 않는다.
+
+## 12. Gold 입력 경계
+
+- Silver 저장은 정규화·도메인·중복·조직 관계 검증 결과로 결정한다.
+- Gold는 Silver의 표준 필드를 다시 원본처럼 정제하지 않는다.
+- Gold의 organization_type은 area_id와 top_area_id의 관계로 TOP 또는 SUB를 계산한다.
+- Gold 전용 PK·FK·필수값 오류는 Gold 품질 보고서와 적재 이력에 남기고, Bronze 원문은 유지한다.

@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}데이터 연결 안내{% endblock %}
+{% block breadcrumb %}연결 안내{% endblock %}
+{% block content %}
+<section class="panel"><h1>Gold 데이터에 연결할 수 없습니다.</h1><p class="desc">MySQL 설정과 Gold 테이블 생성 여부를 확인한 뒤 다시 시도해 주세요.</p><p class="notice error" style="margin-top:18px;">{{ error }}</p></section>
+{% endblock %}

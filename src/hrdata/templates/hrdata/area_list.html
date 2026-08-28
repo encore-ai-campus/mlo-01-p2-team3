@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load display_filters %}
+{% block title %}조직 조회 | HR 데이터{% endblock %}
+{% block breadcrumb %}조직 조회{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">조직 디렉터리</p><h1>조직 조회</h1><p class="desc">조직 ID·이름·상위 조직·담당자로 Gold 조직을 검색합니다.</p></div><div class="actions"><a class="button secondary" href="{% url 'organization_tree' %}">조직도</a><a class="button secondary" href="{% url 'area_export' %}?keyword={{ filters.keyword|urlencode }}&amp;top_area_id={{ filters.top_area_id|urlencode }}&amp;organization_type={{ filters.organization_type|urlencode }}&amp;active={{ filters.active|urlencode }}">검색 결과 CSV</a><a class="button secondary" href="{% url 'area_export' %}?all=1">전체 CSV</a></div></div>
+<section class="panel"><form class="filters" method="get"><div><label for="keyword">통합 검색</label><input id="keyword" name="keyword" value="{{ filters.keyword }}" placeholder="조직명·ID·담당자"></div><div><label for="top_area_id">최상위 조직 ID</label><input id="top_area_id" name="top_area_id" value="{{ filters.top_area_id }}"></div><div><label for="organization_type">조직 구분</label><select id="organization_type" name="organization_type"><option value="">전체</option><option value="TOP" {% if filters.organization_type == "TOP" %}selected{% endif %}>TOP</option><option value="SUB" {% if filters.organization_type == "SUB" %}selected{% endif %}>SUB</option></select></div><div><label for="active">담당자 상태</label><select id="active" name="active"><option value="">전체</option><option value="Y" {% if filters.active == "Y" %}selected{% endif %}>재직</option><option value="N" {% if filters.active == "N" %}selected{% endif %}>비재직</option></select></div><button class="button" type="submit">검색</button></form></section>
+<section class="panel" style="margin-top:18px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h2>조직 목록</h2>
+    <span class="muted">{{ pagination.total }}개 · {{ pagination.page }}/{{ pagination.total_pages }}페이지</span>
+  </div>
+  {% if areas %}
+  <div class="table-wrap">
+    <table id="area-results">
+      <thead>
+        <tr>
+          <th>조직코드</th>
+          <th>조직명</th>
+          <th>직속 상위 조직</th>
+          <th>최상위 조직</th>
+          <th>구분</th>
+          <th>담당자코드</th>
+          <th>담당자명</th>
+          <th>상태</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for area in areas %}
+        <tr>
+          <td class="mono">{{ area.area_id|compact }}</td>
+          <td><a class="link" href="{% url 'area_detail' area.area_id %}">{{ area.area_name|area_display|default:"(이름 없음)" }}</a></td>
+          <td>{{ area.parent_area_name|area_display|default:"—" }}</td>
+          <td>{{ area.top_area_name|area_display|default:"—" }}</td>
+          <td><span class="tag {% if area.top_area_level == 'TOP' %}ok{% endif %}">{{ area.top_area_level|compact|default:"—" }}</span></td>
+          <td class="mono">{% if area.manager_id %}{{ area.manager_id|compact }}{% else %}—{% endif %}</td>
+          <td>{% if area.manager_id %}<a class="link" href="{% url 'manager_detail' area.manager_id %}">{{ area.manager_name|compact }}</a>{% else %}<span class="muted">미배정</span>{% endif %}</td>
+          <td>{% if area.manager_active_yn == 'Y' %}<span class="tag ok">재직</span>{% elif area.manager_active_yn == 'N' %}<span class="tag warn">비재직</span>{% else %}<span class="tag">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="pagination">
+    {% if pagination.has_previous %}<a class="button secondary" href="?keyword={{ filters.keyword|urlencode }}&top_area_id={{ filters.top_area_id|urlencode }}&organization_type={{ filters.organization_type|urlencode }}&active={{ filters.active|urlencode }}&page={{ pagination.previous_page }}">← 이전</a>{% endif %}
+    <span>{{ pagination.page }} / {{ pagination.total_pages }}</span>
+    {% if pagination.has_next %}<a class="button secondary" href="?keyword={{ filters.keyword|urlencode }}&top_area_id={{ filters.top_area_id|urlencode }}&organization_type={{ filters.organization_type|urlencode }}&active={{ filters.active|urlencode }}&page={{ pagination.next_page }}">다음 →</a>{% endif %}
+  </div>
+  {% else %}
+  <div class="empty">조건에 맞는 조직이 없습니다.</div>
+  {% endif %}
+</section>
+{% endblock %}

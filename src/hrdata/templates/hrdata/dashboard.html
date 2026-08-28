@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}대시보드 | HR 데이터{% endblock %}
+{% block breadcrumb %}대시보드{% endblock %}
+{% block content %}
+<section class="hero"><div><p class="eyebrow">레거시 인사·조직 데이터</p><h1>조직 현황을 한눈에 확인하세요.</h1><p class="desc">Silver에서 표준화·검증한 데이터를 MySQL Gold 조회 테이블로 제공합니다.</p></div><div class="hero-stat"><strong>{{ metrics.total_areas|default:0 }}</strong><span>개 조직</span></div></section>
+{% if database_error %}<p class="notice error" style="margin-top:18px;">MySQL 연결 또는 Gold 테이블을 확인하세요: {{ database_error }}</p>{% endif %}
+<section class="kpis" aria-label="핵심 지표">
+  <article class="card"><span class="label">전체 조직</span><div class="value">{{ metrics.total_areas|default:0 }}</div><span class="foot">Gold 조직 테이블</span></article>
+  <article class="card"><span class="label">최상위 조직 수</span><div class="value">{{ metrics.top_areas|default:0 }}</div><span class="foot">조직 계층에서 가장 위에 있는 조직</span></article>
+  <article class="card"><span class="label">전체 담당자 수</span><div class="value">{{ metrics.total_managers|default:0 }}</div><span class="foot">현재 등록된 전체 담당자</span></article>
+  <article class="card"><span class="label">재직 담당자 수</span><div class="value">{{ metrics.active_managers|default:0 }}</div><span class="foot">현재 재직 상태인 담당자</span></article>
+  <article class="card"><span class="label">담당자 미배정</span><div class="value">{{ metrics.unassigned_areas|default:0 }}</div><span class="foot">확인 필요 조직</span></article>
+</section>
+<section class="grid2">
+  <article class="panel"><h2>데이터 처리 흐름</h2><p class="panel-sub">원본을 보존하고 검증된 Gold만 화면에 표시합니다.</p><div class="flow"><div><b>01 Bronze</b><span>원본 보존</span></div><div><b>02 Silver</b><span>정제·검증</span></div><div><b>03 Gold</b><span>조회 테이블</span></div><div><b>04 화면</b><span>조직 정보 조회</span></div></div><div class="quick"><a class="button" href="{% url 'area_list' %}">조직 목록</a><a class="button secondary" href="{% url 'organization_tree' %}">조직도</a><a class="button secondary" href="{% url 'manager_list' %}">담당자 목록</a></div></article>
+  <aside class="panel"><h2>최근 Gold 적재</h2><p class="panel-sub">성공한 적재 이력 · 실행 ID는 직원 ID가 아닙니다.</p>{% if latest_batch %}<dl class="detail-grid"><div><dt>상태</dt><dd><span class="tag ok">{{ latest_batch.status }}</span></dd></div><div><dt>Gold 테이블 합계</dt><dd>{{ latest_batch.loaded_count|default:0 }}<small class="muted"> (조직·담당자·배정·피처 합산)</small></dd></div><div><dt>Gold 실행 ID</dt><dd class="mono">{{ latest_batch.run_id|default:"-" }}</dd></div><div><dt>적재 배치 ID</dt><dd class="mono">{{ latest_batch.load_batch_id|default:"-" }}</dd></div><div><dt>규칙 버전</dt><dd>{{ latest_batch.rule_version|default:"-" }}</dd></div></dl><div style="margin-top:14px;"><p class="panel-sub">현재 테이블별 행 수</p><div class="table-wrap"><table><tbody><tr><th>조직</th><td>{{ table_counts.hr_area|default:"—" }}</td><th>담당자</th><td>{{ table_counts.hr_manager|default:"—" }}</td></tr><tr><th>담당 배정</th><td>{{ table_counts.hr_area_manager_assignment|default:"—" }}</td><th>피처</th><td>{{ table_counts.area_manager_features|default:"—" }}</td></tr></tbody></table></div></div>{% else %}<div class="empty">성공한 적재 이력이 없습니다.</div>{% endif %}</aside>
+</section>
+{% endblock %}

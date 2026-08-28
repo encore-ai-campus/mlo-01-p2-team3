@@ -86,3 +86,20 @@ Bronze는 이 필드가 포함된 API 본문 데이터와 API 응답 메타데�
 - 허용 값·날짜 형식·NULL 토큰 추가는 YAML과 테스트 데이터만 수정한다.
 - 새로운 중복·충돌 알고리즘은 Python 모듈과 테스트를 추가한다.
 - 규칙 버전은 실행 제어 정보에 기록한다.
+
+## 8. Gold 파생 필드와 화면 표시 필드
+
+Gold와 화면에는 Silver 15개 필드에서 계산한 값이 추가될 수 있다.
+
+| 필드 | 위치 | 계산 기준 |
+|---|---|---|
+| organization_type | area_manager_features | area_id == top_area_id이면 TOP, 아니면 SUB |
+| has_parent | area_manager_features | 하위 조직의 부모 ID 존재 여부 |
+| managed_area_count | Django 조회 결과 | manager_id별 Gold 배정 건수 |
+| area_display | Django 화면·CSV 표시값 | area_name의 앞뒤 공백과 승인된 반복 단어만 표시용 정리 |
+
+organization_type과 has_parent는 Silver 원문 필드가 아니다. top_area_level의 API 표준값과
+혼동하지 않으며, Gold 적재 시 조직 ID 관계로 계산한다.
+
+area_display는 이름을 DB에서 바꾸거나 서로 다른 area_id를 합치는 값이 아니다.
+CSV에서도 조직코드·조직명, 담당자코드·담당자명을 각각 별도 열로 유지한다.
