@@ -1,0 +1,66 @@
+# 날짜·시간 표준화 규칙
+# 입력 형식을 추가할 때는 이 파일을 수정하고 rule_version을 올린다.
+
+rule_version: "1.0.1"
+timezone: Asia/Seoul
+
+input_formats:
+  - name: iso_space
+    strptime: "%Y-%m-%d %H:%M:%S"
+    example: "2023-06-25 04:08:30"
+  - name: iso_t
+    strptime: "%Y-%m-%dT%H:%M:%S"
+    example: "2021-12-01T05:30:46"
+  - name: iso_space_fraction
+    strptime: "%Y-%m-%d %H:%M:%S.%f"
+    example: "2019-11-04 00:52:02.0"
+  - name: iso_t_fraction
+    strptime: "%Y-%m-%dT%H:%M:%S.%f"
+    example: "2021-12-01T05:30:46.000"
+  - name: dotted_space
+    strptime: "%Y. %m. %d. %H:%M:%S"
+    example: "2026. 08. 24. 16:51:00"
+  - name: dotted
+    strptime: "%Y.%m.%d %H:%M:%S"
+    example: "2025.07.21 05:28:23"
+  - name: slash_space
+    strptime: "%Y/%m/%d %H:%M:%S"
+    example: "2025/07/21 05:28:23"
+  - name: compact
+    strptime: "%Y%m%d%H%M%S"
+    example: "20190225025935"
+
+invalid_tokens:
+  - ""
+  - "null"
+  - "NULL"
+  - "N/A"
+  - "n/a"
+  - "9999-99-99 99:99:99"
+  - "0000-00-00 00:00:00"
+
+normalization:
+  trim_outer_whitespace: true
+  normalize_unicode: NFKC
+  parse_strictly: true
+  reject_nonexistent_datetime: true
+  reject_invalid_calendar_date: true
+  output_type: datetime
+  output_timezone: UTC
+  source_timezone: Asia/Seoul
+  invalid_action: REVIEW_REQUIRED
+  invalid_error_code: INVALID_DATETIME_FORMAT
+
+field_policy:
+  mgr_hire_dtm:
+    required: false
+    nullable: true
+    formats: [iso_space, iso_t, iso_space_fraction, iso_t_fraction, dotted_space, dotted, slash_space, compact]
+  area_reg_dtm:
+    required: false
+    nullable: true
+    formats: [iso_space, iso_t, iso_space_fraction, iso_t_fraction, dotted_space, dotted, slash_space, compact]
+  top_area_reg_dtm:
+    required: false
+    nullable: true
+    formats: [iso_space, iso_t, iso_space_fraction, iso_t_fraction, dotted_space, dotted, slash_space, compact]

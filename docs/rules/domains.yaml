@@ -1,0 +1,226 @@
+# 데이터 도메인·표준화 규칙
+# 실제 업무 기준이 변경되면 이 파일을 먼저 수정하고 rule_version을 올린다.
+
+rule_version: "normalization-v1.2"
+
+contract:
+  source_type: api_json
+  snapshot_type: full_record
+  raw_field_count: 17
+  # 기존 설정 키 이름은 유지한다. 실제 의미는 API 본문 데이터의 업무 필드 수다.
+  meta_field_count: 15
+  silver_field_count: 15
+
+  raw_fields:
+    - record_id
+    - scheduled_release_at
+    - area_no
+    - area_nm
+    - p_area_no
+    - p_area_nm
+    - top_area_no
+    - top_area_nm
+    - top_area_lvl
+    - mgr_no
+    - mgr_nm
+    - mgr_dept_nm
+    - mgr_pos_nm
+    - mgr_hire_dtm
+    - mgr_act_yn
+    - area_reg_dtm
+    - top_area_reg_dtm
+
+  # API 본문 데이터의 업무 필드다.
+  # record_id·scheduled_release_at은 선택 응답 메타데이터이며 업무 필드에 포함하지 않는다.
+  meta_fields:
+    - area_no
+    - area_nm
+    - p_area_no
+    - p_area_nm
+    - top_area_no
+    - top_area_nm
+    - top_area_lvl
+    - mgr_no
+    - mgr_nm
+    - mgr_dept_nm
+    - mgr_pos_nm
+    - mgr_hire_dtm
+    - mgr_act_yn
+    - area_reg_dtm
+    - top_area_reg_dtm
+
+  silver_fields:
+    - area_id
+    - area_name
+    - parent_area_id
+    - parent_area_name
+    - top_area_id
+    - top_area_name
+    - top_area_level
+    - manager_id
+    - manager_name
+    - department_name
+    - position_name
+    - manager_hire_at
+    - manager_active_yn
+    - area_registered_at
+    - top_area_registered_at
+
+  field_mapping:
+    area_no: area_id
+    area_nm: area_name
+    p_area_no: parent_area_id
+    p_area_nm: parent_area_name
+    top_area_no: top_area_id
+    top_area_nm: top_area_name
+    top_area_lvl: top_area_level
+    mgr_no: manager_id
+    mgr_nm: manager_name
+    mgr_dept_nm: department_name
+    mgr_pos_nm: position_name
+    mgr_hire_dtm: manager_hire_at
+    mgr_act_yn: manager_active_yn
+    area_reg_dtm: area_registered_at
+    top_area_reg_dtm: top_area_registered_at
+
+normalization:
+  unicode_form: NFKC
+  trim_outer_whitespace: true
+  collapse_repeated_whitespace: false
+  preserve_internal_whitespace_unless_unique_match: true
+  empty_value_action: convert_to_null
+  case_sensitive_for_names: false
+
+null_tokens:
+  - ""
+  - "없음"
+  - "-"
+  - "null"
+  - "NULL"
+  - "n/a"
+  - "N/A"
+
+identifiers:
+  organization_id:
+    source_fields: [area_no, p_area_no, top_area_no]
+    silver_fields: [area_id, parent_area_id, top_area_id]
+    pattern: '^BIZ[0-9]{5}$'
+    normalize: uppercase_and_remove_separators
+    invalid_action: REVIEW_REQUIRED
+
+  employee_id:
+    source_field: mgr_no
+    silver_field: manager_id
+    pattern: '^EMP[0-9]{6}$'
+    normalize: uppercase_and_remove_separators
+    invalid_action: REVIEW_REQUIRED
+
+status_domains:
+  manager_active_yn:
+    source_field: mgr_act_yn
+    output_values: ["Y", "N"]
+    mappings:
+      "Y": ["사용", "재직", "YES", "Y", "y", "1"]
+      "N": ["퇴직", "NO", "N", "n", "0", "미사용"]
+    unknown_action: REVIEW_REQUIRED
+    unknown_error_code: UNKNOWN_ACTIVE_STATUS
+
+organization_level:
+  source_field: top_area_lvl
+  silver_field: top_area_level
+  mode: alias_mapping
+  # 아래 값들은 현재 데이터에서 같은 최상위 레벨 의미로 확인되었다.
+  # 매핑 키를 Silver에 저장할 표준값으로 사용한다.
+  mappings:
+    "TOP_LEVEL":
+      - "TOP_LEVEL"
+      - "TOP LEVEL"
+      - "top_level"
+      - "최상위"
+      - "1"
+      - "L1"
+
+  # 표준값만 허용한다. UNKNOWN 등 판단할 수 없는 값은 추가하지 않는다.
+  allowlist:
+    - "TOP_LEVEL"
+  allowlist_required: true
+  review_before_allowlist_update: true
+  unknown_action: REVIEW_REQUIRED
+  unknown_error_code: UNREGISTERED_ORGANIZATION_LEVEL
+
+organization_relationship:
+  parent_field: parent_area_id
+  top_field: top_area_id
+  root_condition: "area_id == top_area_id"
+  child_condition: "area_id != top_area_id"
+  preserve_parent_and_top: true
+  hierarchy_depth: extensible
+  revalidate_when_parent_changes: true
+  root_parent_null_allowed: true
+  root_self_parent_allowed: true
+  child_parent_required: true
+  child_parent_must_differ: true
+  missing_parent_action: REVIEW_REQUIRED
+  self_parent_action_for_child: REVIEW_REQUIRED
+  cycle_action: REVIEW_REQUIRED
+  changed_area_candidate_action: REVIEW_REQUIRED
+  consistent_move_action: UPDATE
+  uncertain_change_action: REVIEW_REQUIRED
+  error_codes:
+    missing_parent: MISSING_PARENT_AREA
+    child_self_parent: SELF_PARENT_REFERENCE
+    cyclic_parent: CYCLIC_PARENT_REFERENCE
+    changed_area: AREA_CHANGE_REVIEW_REQUIRED
+    uncertain_change: AREA_CHANGE_UNCERTAIN
+
+field_policies:
+  manager_name:
+    source_field: mgr_nm
+    required: true
+    review_tokens: ["오류값", "UNKNOWN", "N/A"]
+    review_error_code: INVALID_MANAGER_NAME
+
+  department_name:
+    source_field: mgr_dept_nm
+    nullable: true
+    null_tokens: ["미상", "N/A"]
+    null_action: WARNING
+    reference_tokens: ["기타팀"]
+    reference_action: REVIEW_REQUIRED
+
+  position_name:
+    source_field: mgr_pos_nm
+    nullable: true
+    null_tokens: ["미상", "N/A"]
+    null_action: WARNING
+    reference_tokens: ["기타"]
+    reference_action: REVIEW_REQUIRED
+
+  manager_id:
+    source_field: mgr_no
+    unknown_tokens: ["UNKNOWN"]
+    unknown_action: REVIEW_REQUIRED
+    unknown_error_code: UNKNOWN_MANAGER_ID
+
+versioning:
+  batch_field: run_id
+  # record_id·scheduled_release_at은 최신성 판단에 사용하지 않는다.
+  version_field: null
+  version_order_requires_api_contract: true
+  compare_full_record: true
+  # API에 버전·신뢰할 수 있는 수정 시각이 없으므로 자동 최신값 선택을 하지 않는다.
+  auto_select_latest: false
+  same_id_rules:
+    same_release_same_payload: DUPLICATE
+    same_release_different_payload: SOURCE_RECORD_CONFLICT
+    newer_valid_full_record: REVIEW_REQUIRED
+    newer_invalid_full_record: REVIEW_REQUIRED
+    older_arrival: REVIEW_REQUIRED
+  gold_update: approved_record_only
+
+processing_status:
+  pass: PASS
+  warning: WARNING
+  review_required: REVIEW_REQUIRED
+  error: ERROR
+  rejected: REJECTED
