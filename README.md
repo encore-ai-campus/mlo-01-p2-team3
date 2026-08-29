@@ -11,9 +11,9 @@
 | 이름 | 역할 | GitHub |
 |---|---|---|
 | 김영주 | 팀장 | [escapedaily99](https://github.com/escapedaily99) |
-| 김민서 | 팀원 | [GitHub](https://github.com/) |
-| 이재원 | 팀원 | [GitHub](https://github.com/) |
-| 조성현 | 팀원 | [GitHub](https://github.com/) |
+| 김민서 | 팀원 | [choy1372-sudo](https://github.com/choy1372-sudo) |
+| 이재원 | 팀원 | [vvjeffvv3](https://github.com/vvjeffvv3) |
+| 조성현 | 팀원 | [seonghyeonjo2](https://github.com/seonghyeonjo2) |
 
 ## 2. 프로젝트 개요
 
@@ -129,6 +129,6 @@ MongoDB Bronze·Silver와 MySQL Gold의 상세 컬렉션·테이블 구조는 [E
 - 검토 대상 데이터를 Silver·Gold에 직접 입력하지 않는다.
 - 원본 필드의 추가·삭제·이름 변경은 문서와 API 계약을 함께 갱신한 뒤 진행한다.
 
-## 13. PPT 링크
+## 13. PDF 링크
 
-PPT 링크: 작성 예정
+PDF 링크: (file:///C:/Users/Playdata/Downloads/MLO-02-03.pdf)
