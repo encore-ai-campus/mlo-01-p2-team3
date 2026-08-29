@@ -129,6 +129,6 @@ MongoDB Bronze·Silver와 MySQL Gold의 상세 컬렉션·테이블 구조는 [E
 - 검토 대상 데이터를 Silver·Gold에 직접 입력하지 않는다.
 - 원본 필드의 추가·삭제·이름 변경은 문서와 API 계약을 함께 갱신한 뒤 진행한다.
 
-## 13. PDF 링크
+## 13. PPT 링크
 
-PDF 링크: (file:///C:/Users/Playdata/Downloads/MLO-02-03.pdf)
+PPT 링크: https://drive.google.com/file/d/1TNDmZOdiIwpixb-BAIv216qA4IE-Gt7I/view?usp=sharing
