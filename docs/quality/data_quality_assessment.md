@@ -15,7 +15,7 @@ API 원본과 Bronze·정규화 결과·Silver·Gold 사이의 품질을 측정�
 
 운영 수치는 데이터가 갱신될 때마다 달라질 수 있으므로 문서에 고정하지 않는다.
 Bronze·Silver·Review·Gold의 현재 건수는 품질 보고서 파일과 실행 이력에서 확인한다.
-Silver 보고서는 scripts/report_silver_quality.py가 생성하고, Gold 결과는 hr_gold_load_batch에 남긴다.
+Silver 보고서는 scripts/report_silver_quality.py가 생성하고, Gold 결과·실행 시각·제외 상세는 hr_gold_load_batch에 남긴다. Gold 성공 후 연결된 키는 hr_lineage_links에서 확인한다.
 
 ## 3. 확인된 문제
 
@@ -34,7 +34,7 @@ Silver 보고서는 scripts/report_silver_quality.py가 생성하고, Gold 결�
 - `area_id != top_area_id`이면 하위 부서로 보고, 존재하는 다른 부서를 부모로 지정해야 한다.
 - 하위 부서의 부모 누락·자기 참조·순환 연결은 검토 큐 건수로 집계한다.
 - 같은 `area_id`의 명칭·상위 부서 정보 변경이나 `area_id` 변경은 변경 후보로 집계한다.
-- 관련 코드·명이 일관되게 변경된 경우에는 이동 갱신으로, 그렇지 않으면 검토 대상으로 집계한다.
+- 현재 구현은 조직 코드·명칭 변경을 자동 이동 갱신하지 않고 `SILVER_EXISTING_CONFLICT` 검토 대상으로 집계한다.
 
 ## 4. 품질 지표
 
@@ -47,13 +47,16 @@ Silver 보고서는 scripts/report_silver_quality.py가 생성하고, Gold 결�
 | `BRONZE_RUN_LINK_ERROR` | Bronze 원본과 `run_id` 실행 이력의 연결 누락 | 0 |
 | `NORMALIZATION_PASS_COUNT` | 형식 정규화를 통과한 건수 | 전부 사유 설명 |
 | `NORMALIZATION_REVIEW_COUNT` | 정규화 또는 도메인 검증 실패 건수 | 전부 검토 |
+| `QUALITY_WARNING_COUNT` | Silver에는 저장했지만 선택 속성 등의 경고를 기록한 건수 | 전부 이력 설명 |
 | `ID_VALID_RATE` | 조직·담당자 ID 패턴 적합률 | 100% 또는 승인 예외 |
 | `DATE_PARSE_RATE` | 날짜 해석 성공률 | 100% 또는 승인 예외 |
 | `DOMAIN_VALID_RATE` | 상태·조직 레벨 허용값 적합률 | 100% |
 | `EQUIVALENT_DUP_COUNT` | 표준 결과가 같은 중복 | 전부 이력 설명 |
 | `SAME_ID_CONFLICT_COUNT` | 동일 업무 ID의 API 본문 데이터 충돌 수 | 전부 검토 |
 | `HIERARCHY_REVIEW_COUNT` | 부모·최상위 관계 판단이 필요한 건수 | 전부 검토 |
-| `RECON_DIFF` | 계층 간 설명되지 않은 차이 | Gold 연동 단계에서 산출 |
+| `RECON_DIFF` | 계층 간 설명되지 않은 차이 | Gold 적재 보고서와 계보에서 산출 |
+| `UNIQUE_COMPLETION_COUNT` | 같은 ID의 유일값으로 누락 필드를 자동 보완한 건수 | 보완 필드·근거 기록 |
+| `REVIEW_DEDUP_COUNT` | 같은 원문·단계의 중복 검토 요청 건수 | `PENDING_REVIEW` 중복 0 |
 
 ## 5. 실행별 기록
 
@@ -70,7 +73,7 @@ Silver 정제 결과는 실행 시 출력되는 `정제된 건수`와 `정제되
 | API ↔ Bronze | 레코드 수·응답 메타데이터(있을 때)·본문 데이터·논리 목록 17개·원본값·`run_id` 추적 |
 | Bronze ↔ 정규화 결과 | 업무 15개 대응·형식 정규화 건수 |
 | 정규화 결과 ↔ Silver | 도메인·중복·조직 관계·검토 건수 |
-| Silver ↔ Gold | 승인 건수·PK/FK·현재값 |
+| Silver ↔ Gold | 네 Gold 테이블의 승인 건수·PK/FK·현재값 |
 | Gold ↔ Django | 조직·담당자·품질 지표 |
 
 Bronze 무결성은 API→Bronze 비교에서 별도로 집계한다. 차이가 있으면 Silver 정제 건수에 포함하지 않고
@@ -92,6 +95,8 @@ Bronze 무결성은 API→Bronze 비교에서 별도로 집계한다. 차이가 
 - 중복·충돌·날짜·상태·계층 오류를 구분한다.
 - 동일 ID 충돌 데이터가 기존 정상값을 자동 변경하지 않는다.
 - 모든 건수 차이를 사유 코드로 설명할 수 있다.
+- 유일 후보가 하나일 때만 누락값이 보완되고, 여러 후보는 검토로 남는다.
+- 같은 원문·단계의 대기 검토 문서가 중복 생성되지 않는다.
 
 ## 9. 현재 Django 출력 점검
 

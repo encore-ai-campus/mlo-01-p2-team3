@@ -271,6 +271,9 @@ def _complete_unique_missing_values(
                 if len(values) != 1:
                     continue
                 record[field] = deepcopy(next(iter(values)))
+                completed_fields = item.setdefault("auto_completed_fields", [])
+                if field not in completed_fields:
+                    completed_fields.append(field)
                 # 누락값이 유일값으로 해결됐으므로 해당 필드의 기존 메시지를 제거한다.
                 item["issues"] = [
                     issue
@@ -695,6 +698,10 @@ def review_records(
                 review_item["gold_targets"] = sorted(gold_targets)
             if gold_preflight_blocked:
                 review_item["gold_preflight"] = True
+            if item.get("auto_completed_fields"):
+                review_item["auto_completed_fields"] = list(
+                    item["auto_completed_fields"]
+                )
             for key in (
                 "bronze_id",
                 "bronze_run_id",

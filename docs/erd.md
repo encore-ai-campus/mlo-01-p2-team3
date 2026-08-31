@@ -23,7 +23,7 @@ hr_bronze_raw_records  (원문 전체 보존)
    ├─ 메모리 정규화·검증 통과 ─→ hr_silver_standard_records
    │                                  │
    │                                  ▼
-   │                         staging → MySQL Gold
+   │                         메모리 품질 게이트 → MySQL Gold
    │                                  │
    │                                  ▼
    │                              Django
@@ -41,14 +41,15 @@ hr_bronze_raw_records  (원문 전체 보존)
 | hr_silver_standard_records | 검증을 통과한 표준 업무 필드 15개 | bronze_id는 계보에서 추적 |
 | hr_review_queue | 정규화·도메인·중복·관계 검증 실패 건 | bronze_id, failure_stage |
 | hr_pipeline_runs | 배치 상태·규칙 버전·처리 건수·결과 | run_id |
-| hr_pipeline_pages | 페이지 순서·cursor·HTTP 상태·시각·지연·응답 해시 | run_id |
+| hr_pipeline_pages | 페이지 순서·cursor 해시·next_cursor 해시·HTTP 상태·시각·지연·응답 해시 | run_id |
 | hr_pipeline_control | 다음 수집에 사용할 cursor·next_refresh_at | 현재 증분 상태 |
-| hr_lineage_links | Bronze와 Silver, 이후 Gold의 연결 근거 | bronze_id, silver_key |
+| hr_lineage_links | Bronze·Silver·Gold의 연결 근거 | bronze_id, silver_key, load_batch_id, gold_key |
 
 ### 3.1 Bronze 문서
 
-Bronze는 API가 보낸 구조와 값을 바꾸지 않는다. 본문 데이터는 payload에 들어올 수 있고,
-응답 메타데이터는 문서 최상위에 들어올 수 있지만, 둘 다 원문 보존 대상이다.
+Bronze는 API가 보낸 구조와 값을 바꾸지 않는다. 응답 한 건의 본문 데이터는
+실제 API 키인 `payload` 아래에 들어올 수 있고, 응답 메타데이터는 문서 최상위에
+들어올 수 있지만 둘 다 원문 보존 대상이다. 설명에서는 `payload`를 “본문 데이터”라고 부른다.
 
 ~~~json
 {
@@ -98,12 +99,14 @@ record_id, scheduled_release_at, API 키와 응답 본문은 Silver 업무 필�
 
 | 테이블 | 기본 키 | 역할 |
 |---|---|---|
-| stg_hr_standard_records | 적재 실행 기준 | Gold 반영 전 임시 검증 |
 | hr_area | area_id | 조직·부모·최상위 조직 정보 |
 | hr_manager | manager_id | 담당자 현재 정보 |
 | hr_area_manager_assignment | area_id | 조직별 현재 담당자 연결 |
 | area_manager_features | area_id | 조직 유형과 담당자 상태를 함께 제공 |
 | hr_gold_load_batch | load_batch_id | Gold 적재 실행·규칙·건수·상태 |
+
+Gold 적재 전 품질 게이트는 메모리에서 수행하며, `stg_hr_standard_records` 테이블은
+현재 사용하지 않는다.
 
 ### 4.1 조직 관계
 
@@ -156,6 +159,12 @@ failure_stage는 다음처럼 구분한다.
 
 bronze_id, bronze_run_id, Silver 키, 처리 시각, 규칙 버전,
 품질 상태와 경고 코드를 저장한다. Gold 적재 시에는 load_batch_id와 Gold 키를 연결한다.
+
+### hr_gold_load_batch
+
+load_batch_id, run_id, rule_version, input_hash, loaded_count, status, report_hash와
+함께 Silver 입력 건수, 제외 건수, 실행 시작·종료 시각, 상세 report_json을 저장한다.
+loaded_count는 해당 배치의 적재 행 수이며 Gold 전체 테이블 행 수를 의미하지 않는다.
 
 ## 6. Django 조회와 CSV
 

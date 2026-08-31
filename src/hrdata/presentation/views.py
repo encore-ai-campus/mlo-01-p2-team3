@@ -120,7 +120,9 @@ def area_export(request):
             _csv_cell(row.get("parent_area_name"), area_display),
             _csv_cell(row.get("top_area_id"), compact),
             _csv_cell(row.get("top_area_name"), area_display),
-            _csv_cell(row.get("top_area_level"), compact),
+            # 조직 구분은 API의 top_area_level이 아니라 Gold에서 ID 관계로
+            # 계산한 organization_type(TOP/SUB)을 내보낸다.
+            _csv_cell(row.get("organization_type"), compact),
             _csv_cell(row.get("manager_id"), compact),
             _csv_cell(row.get("manager_name"), compact),
             _csv_cell(row.get("department_name"), compact),

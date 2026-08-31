@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -84,6 +85,7 @@ class RawArchiveRepository:
         item_count: int,
         response_info: Mapping[str, Any] | None = None,
         parse_error: str | None = None,
+        csv_path: str | Path | None = None,
     ) -> dict[str, Any]:
         """원문 한 페이지를 저장하고 갱신된 manifest를 반환한다."""
 
@@ -116,6 +118,24 @@ class RawArchiveRepository:
             "parse_status": "FAILED" if parse_error else "SUCCESS",
             "parse_error": parse_error,
         }
+        # CSV가 함께 저장된 페이지는 같은 manifest에서 파일 크기·해시·건수를
+        # 관리한다. API 원문 JSON은 그대로 두고 CSV만 검증용 사본으로 둔다.
+        if csv_path is not None:
+            csv_file = Path(csv_path)
+            try:
+                relative_csv = csv_file.relative_to(run_folder)
+            except ValueError:
+                # 테스트나 별도 저장소가 다른 root를 사용해도 manifest에서
+                # 다시 찾을 수 있도록 상대 경로로 기록한다.
+                relative_csv = Path(os.path.relpath(csv_file, run_folder))
+            page["csv_path"] = relative_csv.as_posix()
+            page["csv_item_count"] = item_count
+            if csv_file.exists():
+                page["csv_file_size_bytes"] = csv_file.stat().st_size
+                page["csv_sha256"] = hashlib.sha256(csv_file.read_bytes()).hexdigest()
+            else:
+                page["csv_file_size_bytes"] = None
+                page["csv_sha256"] = None
 
         manifest_path = run_folder / "manifest.json"
         if manifest_path.exists():
@@ -150,7 +170,7 @@ def verify_archive(
     root: str | Path | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
-    """원문 JSON과 manifest의 누락·해시·임시 파일을 검사한다."""
+    """원문 JSON·CSV와 manifest의 누락·크기·해시를 검사한다."""
 
     archive_root = Path(root) if root is not None else DEFAULT_ROOT
     result: dict[str, Any] = {
@@ -158,9 +178,12 @@ def verify_archive(
         "manifest_page_count": 0,
         "manifest_item_count": 0,
         "raw_file_count": 0,
+        "csv_file_count": 0,
         "missing_manifests": [],
         "missing_files": [],
         "hash_mismatches": [],
+        "size_mismatches": [],
+        "csv_row_mismatches": [],
         "orphan_files": [],
         "temp_files": [],
         "invalid_manifests": [],
@@ -184,8 +207,15 @@ def verify_archive(
     for run_folder in run_folders:
         manifest_path = run_folder / "manifest.json"
         raw_folder = run_folder / "raw"
-        actual_files = set(raw_folder.glob("*.json")) if raw_folder.exists() else set()
+        actual_files = (
+            {path for path in raw_folder.iterdir() if path.is_file()}
+            if raw_folder.is_dir()
+            else set()
+        )
         result["raw_file_count"] += len(actual_files)
+        result["csv_file_count"] += sum(
+            1 for path in actual_files if path.suffix.lower() == ".csv"
+        )
         if not manifest_path.exists():
             result["missing_manifests"].append(str(manifest_path))
             result["orphan_files"].extend(str(path) for path in sorted(actual_files))
@@ -203,7 +233,10 @@ def verify_archive(
 
         expected_files: set[Path] = set()
         result["manifest_page_count"] += len(pages)
-        result["manifest_item_count"] += int(manifest.get("item_count", 0))
+        try:
+            result["manifest_item_count"] += int(manifest.get("item_count", 0))
+        except (TypeError, ValueError):
+            result["invalid_manifests"].append(str(manifest_path))
         for page in pages:
             if not isinstance(page, Mapping) or not page.get("path"):
                 result["invalid_manifests"].append(str(manifest_path))
@@ -212,11 +245,67 @@ def verify_archive(
             expected_files.add(raw_path)
             if not raw_path.exists():
                 result["missing_files"].append(str(raw_path))
-                continue
-            expected_hash = page.get("sha256")
-            actual_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
-            if expected_hash and actual_hash != expected_hash:
-                result["hash_mismatches"].append(str(raw_path))
+            else:
+                expected_hash = page.get("sha256")
+                actual_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+                if expected_hash and actual_hash != expected_hash:
+                    result["hash_mismatches"].append(str(raw_path))
+                expected_size = page.get("file_size_bytes")
+                if expected_size is not None:
+                    try:
+                        size_matches = raw_path.stat().st_size == int(expected_size)
+                    except (TypeError, ValueError):
+                        result["invalid_manifests"].append(str(manifest_path))
+                        size_matches = True
+                    if not size_matches:
+                        result["size_mismatches"].append(str(raw_path))
+
+            # CSV 경로가 manifest에 있으면 JSON과 같은 페이지의 사본으로
+            # 보고 해시·크기·데이터 행 수를 함께 확인한다.
+            if "csv_path" in page:
+                csv_reference = page.get("csv_path")
+                csv_path = (
+                    run_folder / str(csv_reference)
+                    if csv_reference
+                    else raw_folder / f"page_{int(page.get('page_no', 0)):04d}.csv"
+                )
+                expected_files.add(csv_path)
+                if not csv_path.exists():
+                    result["missing_files"].append(str(csv_path))
+                else:
+                    expected_csv_hash = page.get("csv_sha256")
+                    actual_csv_hash = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+                    if expected_csv_hash and actual_csv_hash != expected_csv_hash:
+                        result["hash_mismatches"].append(str(csv_path))
+                    expected_csv_size = page.get("csv_file_size_bytes")
+                    if expected_csv_size is not None:
+                        try:
+                            csv_size_matches = (
+                                csv_path.stat().st_size == int(expected_csv_size)
+                            )
+                        except (TypeError, ValueError):
+                            result["invalid_manifests"].append(str(manifest_path))
+                            csv_size_matches = True
+                        if not csv_size_matches:
+                            result["size_mismatches"].append(str(csv_path))
+                    try:
+                        with csv_path.open("r", encoding="utf-8", newline="") as file:
+                            row_count = max(sum(1 for _ in csv.DictReader(file)), 0)
+                        expected_rows = int(
+                            page.get("csv_item_count", page.get("item_count", 0))
+                        )
+                        if row_count != expected_rows:
+                            result["csv_row_mismatches"].append({
+                                "path": str(csv_path),
+                                "expected": expected_rows,
+                                "actual": row_count,
+                            })
+                    except (OSError, UnicodeError, csv.Error, ValueError, TypeError):
+                        result["csv_row_mismatches"].append({
+                            "path": str(csv_path),
+                            "expected": page.get("csv_item_count", page.get("item_count", 0)),
+                            "actual": "UNREADABLE",
+                        })
 
         result["orphan_files"].extend(
             str(path) for path in sorted(actual_files - expected_files)
@@ -231,6 +320,8 @@ def verify_archive(
         result["missing_manifests"]
         or result["missing_files"]
         or result["hash_mismatches"]
+        or result["size_mismatches"]
+        or result["csv_row_mismatches"]
         or result["invalid_manifests"]
     )
     warnings = result["orphan_files"] or result["temp_files"]

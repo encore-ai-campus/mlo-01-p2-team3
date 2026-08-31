@@ -210,7 +210,8 @@ organization_relationship:
   self_parent_action_for_child: REVIEW_REQUIRED
   cycle_action: REVIEW_REQUIRED
   changed_area_candidate_action: REVIEW_REQUIRED
-  consistent_move_action: UPDATE
+  # 현재는 부서 이동을 자동 확정하지 않고 검토 큐에서 승인한다.
+  consistent_move_action: REVIEW_REQUIRED
   uncertain_change_action: REVIEW_REQUIRED
   error_codes:
     missing_parent: MISSING_PARENT_AREA

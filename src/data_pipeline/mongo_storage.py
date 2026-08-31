@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping
 
 from bson import ObjectId
 from django.conf import settings
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateMany
 from pymongo.collection import Collection
 from pymongo.operations import ReplaceOne
 
@@ -323,7 +323,19 @@ class PipelinePageRepository:
     COLLECTION_NAME = "hr_pipeline_pages"
 
     def __init__(self, collection: Any | None = None) -> None:
-        self.collection = collection or get_mongo_database()[self.COLLECTION_NAME]
+        self.collection = (
+            collection
+            if collection is not None
+            else get_mongo_database()[self.COLLECTION_NAME]
+        )
+
+    @staticmethod
+    def _cursor_hash(cursor: str | None) -> str | None:
+        """cursor 원문을 저장하지 않고 추적용 SHA-256만 남긴다."""
+
+        if cursor is None:
+            return None
+        return hashlib.sha256(str(cursor).encode("utf-8")).hexdigest()
 
     def save_page(
         self,
@@ -345,8 +357,8 @@ class PipelinePageRepository:
         self.collection.insert_one({
             "run_id": run_id,
             "page_no": page_no,
-            "cursor": cursor,
-            "next_cursor": next_cursor,
+            "cursor_hash": self._cursor_hash(cursor),
+            "next_cursor_hash": self._cursor_hash(next_cursor),
             "response_hash": response_hash,
             "item_count": item_count,
             "next_refresh_at": next_refresh_at,
@@ -357,6 +369,68 @@ class PipelinePageRepository:
             "error_code": error_code,
         })
 
+    def migrate_legacy_cursor_fields(self) -> dict[str, int]:
+        """기존 페이지의 cursor 원문을 해시로 바꾸고 원문을 제거한다.
+
+        해시 저장 정책을 적용하기 전에 생성된 페이지 이력에는 ``cursor``와
+        ``next_cursor``가 남아 있을 수 있다. 원문을 다시 API 호출에 사용할
+        필요는 없으므로, 추적에 필요한 SHA-256만 남긴다.
+        """
+
+        query = {
+            "$or": [
+                {"cursor": {"$exists": True}},
+                {"next_cursor": {"$exists": True}},
+            ]
+        }
+        documents = list(
+            self.collection.find(
+                query,
+                {"_id": 1, "cursor": 1, "next_cursor": 1},
+            )
+        )
+        migrated = 0
+        skipped = 0
+        for document in documents:
+            document_id = document.get("_id")
+            if document_id is None:
+                skipped += 1
+                continue
+
+            set_fields: dict[str, Any] = {}
+            unset_fields: dict[str, str] = {}
+            if "cursor" in document:
+                set_fields["cursor_hash"] = self._cursor_hash(
+                    document.get("cursor")
+                )
+                unset_fields["cursor"] = ""
+            if "next_cursor" in document:
+                set_fields["next_cursor_hash"] = self._cursor_hash(
+                    document.get("next_cursor")
+                )
+                unset_fields["next_cursor"] = ""
+
+            if not set_fields:
+                skipped += 1
+                continue
+            self.collection.update_one(
+                {"_id": document_id},
+                {"$set": set_fields, "$unset": unset_fields},
+            )
+            migrated += 1
+        return {
+            "scanned": len(documents),
+            "migrated": migrated,
+            "skipped": skipped,
+        }
+
+    def has_response_hash(self, response_hash: str | None) -> bool:
+        """같은 API 응답을 이전 페이지 이력에서 찾는다."""
+
+        if not response_hash:
+            return False
+        return self.collection.find_one({"response_hash": response_hash}) is not None
+
 
 class PipelineRunRepository:
     """배치 실행 결과를 저장한다."""
@@ -364,7 +438,11 @@ class PipelineRunRepository:
     COLLECTION_NAME = "hr_pipeline_runs"
 
     def __init__(self, collection: Any | None = None) -> None:
-        self.collection = collection or get_mongo_database()[self.COLLECTION_NAME]
+        self.collection = (
+            collection
+            if collection is not None
+            else get_mongo_database()[self.COLLECTION_NAME]
+        )
 
     def start(self, run_id: str, rule_version: str) -> str:
         """배치 시작 정보를 저장한다."""
@@ -642,16 +720,24 @@ class ReviewQueueRepository:
 
 
 class LineageRepository:
-    """Bronze와 Silver의 연결 정보를 저장한다."""
+    """Bronze·Silver·Gold의 연결 정보를 저장한다."""
 
     COLLECTION_NAME = "hr_lineage_links"
 
     def __init__(self, collection: Any | None = None) -> None:
-        self.collection = collection or get_mongo_database()[self.COLLECTION_NAME]
+        self.collection = (
+            collection
+            if collection is not None
+            else get_mongo_database()[self.COLLECTION_NAME]
+        )
         if collection is None:
             self.collection.create_index(
                 [("bronze_id", 1)],
                 name="ix_lineage_bronze_id",
+            )
+            self.collection.create_index(
+                [("silver_key.area_id", 1)],
+                name="ix_lineage_silver_area_id",
             )
 
     def save_links(self, links: Iterable[Mapping[str, Any]]) -> int:
@@ -662,3 +748,76 @@ class LineageRepository:
             return 0
         result = self.collection.insert_many(documents, ordered=False)
         return len(result.inserted_ids)
+
+    def attach_gold(
+        self,
+        load_batch_id: str,
+        gold_keys_by_area: Mapping[str, Mapping[str, Any]],
+        rule_version: str | None = None,
+        processed_at: datetime | None = None,
+        bronze_id_by_area: Mapping[str, str] | None = None,
+    ) -> int:
+        """Silver 계보에 Gold 배치 ID와 테이블별 키를 연결한다.
+
+        Gold 적재가 끝난 뒤 이번 Silver 원본의 ``bronze_id``가 있으면 그
+        링크를, 없으면 같은 ``silver_key.area_id``를 가진 링크를 갱신한다.
+        MongoDB와 MySQL은 별도 저장소이므로, 연결 실패가 Gold 트랜잭션을
+        되돌리지는 않으며 호출부가 결과 건수를 보고한다.
+        """
+
+        if not isinstance(load_batch_id, str) or not load_batch_id.strip():
+            raise ValueError("GOLD_LINEAGE_BATCH_ID_MISSING: load_batch_id가 필요합니다.")
+        if not gold_keys_by_area:
+            return 0
+
+        linked_at = processed_at or datetime.now(timezone.utc)
+        updates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for area_id, gold_key in gold_keys_by_area.items():
+            if area_id in (None, "") or not gold_key:
+                continue
+            update: dict[str, Any] = {
+                "load_batch_id": load_batch_id,
+                "gold_key": dict(gold_key),
+                "gold_result": "GOLD_SAVED",
+                "gold_processed_at": linked_at,
+            }
+            if rule_version:
+                update["gold_rule_version"] = rule_version
+            bronze_id = (
+                bronze_id_by_area.get(area_id)
+                if bronze_id_by_area is not None
+                else None
+            )
+            # Bronze ID가 있으면 이번 Silver 원본 링크만 갱신한다. 예전
+            # 링크까지 같은 area_id로 덮지 않도록 하며, ID가 없는 구형
+            # 링크는 Silver 키로 호환 갱신한다.
+            query = (
+                {"bronze_id": bronze_id}
+                if bronze_id not in (None, "")
+                else {"silver_key.area_id": area_id}
+            )
+            updates.append((query, {"$set": update}))
+
+        if not updates:
+            return 0
+        # area_id별 키가 다르므로 bulk_write로 묶어 MongoDB 왕복 횟수를
+        # 줄인다. 아주 단순한 테스트용 collection에는 기존 방식으로
+        # 대체한다.
+        if hasattr(self.collection, "bulk_write"):
+            updated = 0
+            operations = [UpdateMany(query, update) for query, update in updates]
+            for start in range(0, len(operations), 1000):
+                result = self.collection.bulk_write(
+                    operations[start:start + 1000], ordered=False
+                )
+                updated += int(getattr(result, "matched_count", 0) or 0)
+            return updated
+
+        updated = 0
+        for query, update in updates:
+            result = self.collection.update_many(
+                query,
+                update,
+            )
+            updated += int(getattr(result, "matched_count", 0) or 0)
+        return updated

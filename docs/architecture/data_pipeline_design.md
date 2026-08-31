@@ -22,8 +22,8 @@ API 본문 데이터의 별도 필드로 생성하지 않는다.
 | API | 주기 호출·페이지·재시도 | 레거시 전체 응답 |
 | Bronze | 원본 보존 | API 원본 문서 전체. 본문 데이터 15개, 선택 응답 메타데이터, 수집 `run_id` |
 | 정규화 결과 | 메모리에서 API 본문 데이터를 표준 필드로 변환 | 검증에 사용할 업무 15개 필드 |
-| Silver | 정규화 결과 중 도메인·중복·관계 검증을 통과한 결과 | 검증 완료 업무 15개 필드 |
-| Gold | 현재 상태 제공 | 조직·담당자·배정 테이블 |
+| Silver | 정규화 결과 중 Silver 저장 검증을 통과한 결과 | `PASS` 또는 `PASS_WITH_WARNING` 상태의 업무 15개 필드 |
+| Gold | 현재 상태 제공 | 조직·담당자·배정·파생 피처 테이블 |
 | Django | 조회 화면 | Gold와 품질 현황 |
 
 ## 3. API 실행
@@ -67,14 +67,15 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 정규화·도메인·중복·조직 관계를 검증한 뒤 Silver 또는 `hr_review_queue`에 저장한다. 따라서 Silver 검증 규칙을
 추가해도 API 클라이언트와 Bronze 원본 저장 로직은 변경하지 않는다.
 
-스케줄러는 API 수집 결과의 새 Bronze 건수만 다음 Silver 처리에 전달한다. 실행 주기와 실행 방법은
-운영 환경을 확정한 뒤 결정한다. 최초 전체 Silver 저장은 수동으로 한 번 실행하고, 이후에는
-`--latest N --write`로 새 건수만 처리한다.
+스케줄러는 `scripts/run_pipeline_5m.ps1`로 5분마다 실행한다. 한 사이클에서 API를 수집하고
+미처리 Bronze를 Silver로 처리한 뒤, Silver 성공 시 Gold 부분 적재를 실행한다. 최초 전체 Silver
+저장은 수동으로 한 번 실행하며, 남은 미처리 건수는 다음 5분 사이클에서 이어서 처리한다.
 
 ## 5. 정규화·검증
 
 - API 본문 데이터가 객체인지와 업무 필드 15개가 정확히 있는지 매핑 단계에서 확인한 뒤 메모리에서 표준 컬럼명과 형식으로 변환한다.
 - 업무 필드 누락·추가·타입 오류는 `MAPPING_PAYLOAD_SCHEMA_MISMATCH` 또는 `MAPPING_PAYLOAD_TYPE_INVALID`로 검토 큐에 보낸다. Bronze 원문은 유지한다.
+- 같은 `area_id`·`manager_id`에서 하나로 확인되는 값만 누락 필드에 보완한다. 후보가 없거나 여러 값이면 임의로 채우지 않는다.
 - 정규화 결과에 도메인·중복·조직 관계 검증을 적용한다.
 - 오류가 있으면 결과를 별도 컬렉션에 저장하지 않고 `hr_review_queue`에 보낸다.
 
@@ -82,7 +83,7 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 
 컬렉션: `hr_silver_standard_records`
 
-- 정규화 결과 중 도메인·중복·조직 관계 검증을 통과한 업무 필드 15개만 저장한다.
+- 정규화 결과 중 Silver 저장 검증을 통과한 업무 필드 15개를 저장한다. 선택 속성 경고가 있어도 `PASS_WITH_WARNING`이면 저장하고 경고 이력을 남긴다.
 - API 레코드는 전체 스냅샷으로 처리한다. 서로 다른 배치의 필드를 섞지 않는다.
 - API 버전 정보가 없으므로 같은 업무 ID의 충돌은 자동으로 현재값을 교체하지 않는다.
 - 담당자 승인 후 재처리한 결과만 명시적으로 현재값을 갱신한다.
@@ -94,19 +95,21 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 하위 부서의 부모가 없거나 자기 참조·순환 연결이면 검토 큐로 보낸다. 계층은 2단계로 고정하지 않으며,
 부모가 추가·변경되면 관계를 다시 검증한다.
 
-같은 `area_id`의 부서명·상위 부서 정보 변경이나 `area_id` 변경은 변경 후보로 분류한다. ID 변경과 함께
-관련 코드·명이 일관되게 변경되면 이동으로 갱신하고, 근거가 부족하면 자동 갱신하지 않고 검토 큐로 보낸다.
+같은 `area_id`의 부서명·상위 부서 정보 변경이나 `area_id` 변경은 변경 후보로 분류한다. 현재 구현은
+자동 갱신하지 않고 `SILVER_EXISTING_CONFLICT`로 검토 큐에 보낸다. 일관된 부서 이동 자동 갱신은
+별도 기준 확정 후 구현할 대상이다.
 
 ## 7. Gold
 
-테이블: `hr_area`, `hr_manager`, `hr_area_manager_assignment`
+테이블: `hr_area`, `hr_manager`, `hr_area_manager_assignment`, `area_manager_features`
 
 - 조직은 `area_id`, 담당자는 `manager_id`, 배정은 `area_id`를 기준으로 현재값을 관리한다.
 - 한 담당자가 여러 조직을 맡는 것은 허용한다.
-- 검증을 통과한 Silver만 임시 테이블을 거쳐 Gold에 반영한다.
+- 검증을 통과한 Silver를 메모리에서 품질 게이트한 뒤 Gold에 반영한다.
 - PK/FK·건수 검증에 실패하면 전체 변경을 취소하고 기존 Gold를 유지한다.
 - 증분 응답에 없다는 이유만으로 Gold 행을 삭제하지 않는다.
-- `stg_hr_standard_records`에서 적재 전 검증을 수행하고, `hr_gold_load_batch`에 적재 이력을 남긴다.
+- 별도 `stg_hr_standard_records` 테이블은 현재 미구현이며, 실행 규칙에서
+  `staging_enabled: false`로 관리한다. 적재 이력은 `hr_gold_load_batch`에 남긴다.
 
 ## 8. 검토와 재처리
 
@@ -131,17 +134,30 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 | `QUALITY_WARNING` | Silver 저장은 가능하지만 품질 경고를 남긴 건 | Silver 저장 및 경고 이력 |
 | `UNKNOWN` | 기존 문서 등 단계 정보가 없음 | 원본 연결 후 확인 |
 
+검토 식별 키는 `review_stage:bronze_id`를 사용하고 `bronze_id`가 없으면
+`source_record_sha256`를 사용한다. 같은 키의 `PENDING_REVIEW`는 upsert하여 중복을 막고,
+상태는 `PENDING_REVIEW → APPROVED` 또는 `PENDING_REVIEW → REJECTED`로 변경한다.
+승인 건만 Bronze에서 재처리하며, 결과와 규칙 버전은 `reprocess_history`에 추가한다.
+
 ## 9. 제어 정보
 
 | 컬렉션 | 역할 |
 |---|---|
 | `hr_pipeline_runs` | 배치 실행·규칙 버전·처리 건수(실패 시 상세 보고) |
 | `hr_pipeline_control` | 현재 cursor·`next_refresh_at` |
-| `hr_pipeline_pages` | 페이지·커서·HTTP 상태·요청/응답 시각·지연 시간·응답 해시·오류 코드 |
+| `hr_pipeline_pages` | 페이지·cursor 해시·HTTP 상태·요청/응답 시각·지연 시간·응답 해시·오류 코드 |
 | `hr_review_queue` | 오류·판단 불가·실패 단계·승인 상태 |
-| `hr_lineage_links` | Bronze–Silver–Gold 연결과 검토·반영 근거(후속 연동 단계) |
+| `hr_lineage_links` | Bronze–Silver–Gold 연결, `load_batch_id`·Gold 키와 검토·반영 근거 |
 
 응답 본문과 API 키는 페이지 이력이나 파일 로그에 저장하지 않는다.
+
+`hr_gold_load_batch`에는 Silver 입력 건수, Gold 처리 건수, 제외 건수,
+시작·종료 시각과 상세 결과 JSON을 저장한다. 대시보드는 시작 시각이 가장
+최근인 성공 배치를 표시한다.
+
+이 필드들은 다음 Gold 실행부터 기록된다. 기존 페이지 이력의 원본 cursor나
+기존 계보 문서에 Gold 정보가 없는 경우는 자동 소급하지 않고 점검·백필 대상으로
+남긴다.
 
 ## 10. 장애 원칙
 
@@ -160,7 +176,13 @@ Bronze 저장 직후 수집 결과와 저장 결과가 같은지 확인한다.
 
 ## 12. 현재 Django 출력 연결
 
-Django의 repository는 MySQL Gold 테이블만 읽고 service가 화면용 결과를 만든다.
+Django는 `presentation → service → repository` 3계층으로 구성한다.
+
+- `presentation`: URL·View·Template과 CSV 응답을 담당하며 요청·표시 형식만 다룬다.
+- `service`: Gold 조회 결과를 조합하고 검색·집계·표시용 정리를 담당한다. Bronze·Silver를 직접 수정하지 않는다.
+- `repository`: MySQL Gold 테이블을 읽는 SQL만 담당하며 수집·정규화 규칙을 구현하지 않는다.
+
+repository는 MySQL Gold 테이블만 읽고 service가 화면용 결과를 만든다.
 
 - 조직 목록은 area_id와 area_name을 분리해 표시하고, 부모·최상위 조직과 담당자 정보를 함께 제공한다.
 - 담당자 목록은 manager_id와 manager_name을 분리해 표시하고, 부서·직급·재직 상태·담당 조직 수를 제공한다.
@@ -169,4 +191,5 @@ Django의 repository는 MySQL Gold 테이블만 읽고 service가 화면용 결�
 - 화면·CSV의 이름 반복 단어와 공백 정리는 표시 단계에서만 수행한다. 데이터베이스 값, 키, 건수는 바꾸지 않는다.
 - CSV 생성은 브라우저에 보이는 현재 페이지의 DOM을 복사하지 않고 서버가 Gold 조회 결과로 직접 만든다.
 
+모든 경로는 스크립트 자신의 위치에서 프로젝트 루트를 계산하므로 압축을 푼 위치가 달라도 동작한다.
 현재 구현의 실행·검증 명령은 [실행 매뉴얼](../operations_runbook.md)에 정리한다.

@@ -12,7 +12,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = PROJECT_ROOT / "data" / "bronze_csv"
+# JSON 원문과 같은 Bronze 영역에 CSV를 저장한다.
+DEFAULT_ROOT = PROJECT_ROOT / "data" / "bronze"
 KST = timezone(timedelta(hours=9))
 
 
@@ -21,6 +22,18 @@ def _safe_run_id(run_id: str) -> str:
 
     value = re.sub(r"[^A-Za-z0-9_.=-]+", "_", str(run_id)).strip("._")
     return value or "manual"
+
+
+def _ingest_date(run_id: str) -> str:
+    """run_id 앞의 YYYYMMDD를 날짜 폴더명으로 바꾼다."""
+
+    match = re.match(r"^(\d{8})(?:_|$)", str(run_id))
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d").date().isoformat()
+        except ValueError:
+            pass
+    return datetime.now(KST).date().isoformat()
 
 
 def _csv_value(value: Any) -> Any:
@@ -36,8 +49,31 @@ def _csv_value(value: Any) -> Any:
 class RawCsvRepository:
     """API item을 run_id/page 단위 CSV로 저장하고 이전 파일을 압축한다."""
 
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        source_name: str = "hr_api",
+    ) -> None:
+        # 기본 실행은 raw_archive와 같은 경로를 쓴다. 외부에서 임시 root를
+        # 직접 주는 기존 호출부는 예전 레이아웃을 유지해 호환한다.
+        self._archive_layout = root is None
         self.root = Path(root) if root is not None else DEFAULT_ROOT
+        self.source_name = re.sub(
+            r"[^A-Za-z0-9_.=-]+", "_", str(source_name)
+        ).strip("._") or "hr_api"
+
+    def _run_folder(self, run_id: str) -> Path:
+        """JSON manifest와 같은 source/date/run 폴더를 계산한다."""
+
+        safe_run_id = _safe_run_id(run_id)
+        if not self._archive_layout:
+            return self.root / f"run_id={safe_run_id}"
+        return (
+            self.root
+            / f"source={self.source_name}"
+            / f"ingest_date={_ingest_date(safe_run_id)}"
+            / f"run_id={safe_run_id}"
+        )
 
     def save_page(
         self,
@@ -66,9 +102,10 @@ class RawCsvRepository:
         if "raw_json" not in fieldnames:
             fieldnames.append("raw_json")
 
-        run_folder = self.root / f"run_id={_safe_run_id(run_id)}"
-        run_folder.mkdir(parents=True, exist_ok=True)
-        output_path = run_folder / f"page_{page_no:04d}.csv"
+        run_folder = self._run_folder(run_id)
+        raw_folder = run_folder / "raw" if self._archive_layout else run_folder
+        raw_folder.mkdir(parents=True, exist_ok=True)
+        output_path = raw_folder / f"page_{page_no:04d}.csv"
         with output_path.open("w", encoding="utf-8", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
@@ -91,7 +128,14 @@ class RawCsvRepository:
             return []
         today = today or datetime.now(KST).date()
         archives: list[Path] = []
-        for run_folder in sorted(self.root.glob("run_id=*")):
+        if self._archive_layout:
+            run_folders = sorted(
+                self.root.glob("source=*/ingest_date=*/run_id=*")
+            )
+        else:
+            run_folders = sorted(self.root.glob("run_id=*"))
+
+        for run_folder in run_folders:
             if not run_folder.is_dir():
                 continue
             run_id = run_folder.name.removeprefix("run_id=")
@@ -105,7 +149,10 @@ class RawCsvRepository:
             if run_date >= today:
                 continue
 
-            archive_path = self.root / f"{run_folder.name}.zip"
+            # 새 레이아웃에서는 해당 ingest_date 폴더 옆에 압축한다.
+            archive_path = run_folder.with_suffix(".zip")
+            if not self._archive_layout:
+                archive_path = self.root / f"{run_folder.name}.zip"
             if archive_path.exists():
                 continue
             with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:

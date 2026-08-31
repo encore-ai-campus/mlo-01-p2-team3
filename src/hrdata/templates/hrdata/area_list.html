@@ -32,7 +32,7 @@
           <td><a class="link" href="{% url 'area_detail' area.area_id %}">{{ area.area_name|area_display|default:"(이름 없음)" }}</a></td>
           <td>{{ area.parent_area_name|area_display|default:"—" }}</td>
           <td>{{ area.top_area_name|area_display|default:"—" }}</td>
-          <td><span class="tag {% if area.top_area_level == 'TOP' %}ok{% endif %}">{{ area.top_area_level|compact|default:"—" }}</span></td>
+          <td><span class="tag {% if area.organization_type == 'TOP' %}ok{% endif %}">{{ area.organization_type|compact|default:"—" }}</span></td>
           <td class="mono">{% if area.manager_id %}{{ area.manager_id|compact }}{% else %}—{% endif %}</td>
           <td>{% if area.manager_id %}<a class="link" href="{% url 'manager_detail' area.manager_id %}">{{ area.manager_name|compact }}</a>{% else %}<span class="muted">미배정</span>{% endif %}</td>
           <td>{% if area.manager_active_yn == 'Y' %}<span class="tag ok">재직</span>{% elif area.manager_active_yn == 'N' %}<span class="tag warn">비재직</span>{% else %}<span class="tag">—</span>{% endif %}</td>

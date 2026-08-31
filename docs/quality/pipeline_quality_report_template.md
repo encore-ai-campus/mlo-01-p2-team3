@@ -10,6 +10,11 @@
 | 정규화 규칙 버전 |  |
 | Gold 규칙 버전 |  |
 | 실행 상태 |  |
+| Gold 시작 시각 |  |
+| Gold 종료 시각 |  |
+| Silver 입력 건수 |  |
+| Gold 제외 건수 |  |
+| Gold 계보 연결 건수 |  |
 
 ## 2. 계층별 건수
 
@@ -41,14 +46,19 @@ QUALITY_WARNING, UNKNOWN 중 하나로 기록한다.
 
 ## 4. 무결성 확인
 
-- [ ] API 항목 수와 Bronze 저장 건수를 비교했다.
+- [ ] API 응답 데이터 건수와 Bronze 저장 건수를 비교했다.
 - [ ] 페이지 cursor 누락·반복이 없다.
 - [ ] Bronze 원문 파일과 manifest의 수량·크기·SHA-256이 일치한다.
 - [ ] Bronze 문서와 run_id 연결이 모두 확인된다.
 - [ ] Silver 문서가 15개 표준 필드를 사용한다.
 - [ ] 검토 큐 문서가 Silver에 중복 저장되지 않았다.
+- [ ] 같은 `area_id`·`manager_id`의 유일값 보완 건수와 보완 필드를 기록했다.
+- [ ] 같은 원문·단계의 `PENDING_REVIEW` 중복이 없다.
 - [ ] Gold PK·FK·조직 계층 검증을 통과했다.
 - [ ] Gold 적재 건수와 hr_gold_load_batch의 loaded_count가 일치한다.
+- [ ] `hr_gold_load_batch`의 시작 시각 기준으로 최신 성공 배치를 확인했다.
+- [ ] `hr_gold_load_batch.report_json`에서 테이블별 처리·제외 건수를 확인했다.
+- [ ] `hr_lineage_links`에 Gold `load_batch_id`와 Gold 키가 연결되어 있다.
 
 ## 5. Django 출력 확인
 

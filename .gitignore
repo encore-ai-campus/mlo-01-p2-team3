@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+pytestdebug.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and generated files
+db.sqlite3
+*.sqlite3
+reports/
+logs/
+data/bronze_csv/
+data/bronze/
+staticfiles/
+*.log
+*.zip
+*.tmp
+*.bak
+
+# IDE and operating system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Private key and certificate files
+*.pem
+*.key
+*.p12
+*.secret

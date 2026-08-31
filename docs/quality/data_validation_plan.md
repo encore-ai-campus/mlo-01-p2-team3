@@ -12,7 +12,7 @@ API → Bronze → 정규화·검증 → Silver → Gold → Django
 | API → Bronze | 원본 문서·본문 데이터 전체·논리 목록 17개·원본값·`run_id` 추적·중복. 선택 응답 메타데이터 누락은 허용 |
 | Bronze → 정규화·검증 | 15개 매핑·형식 정규화·규칙 버전 |
 | 정규화·검증 → Silver | 도메인·중복·조직 관계 검증 |
-| Silver → Gold | PK·FK·조직 관계·건수 |
+| Silver → Gold | 네 Gold 테이블의 PK·FK·조직 관계·건수 |
 | Gold → Django | 화면 집계 일치 |
 
 ## 2. 사전 조건
@@ -60,7 +60,8 @@ API → Bronze → 정규화·검증 → Silver → Gold → Django
 - `area_id != top_area_id`이면 하위 부서로 처리하고, 존재하는 다른 부서를 부모로 요구한다.
 - 하위 부서의 부모 누락·자기 참조·순환 연결은 검토 큐로 보낸다.
 - 같은 `area_id`의 명칭·상위 부서 정보 변경이나 `area_id` 변경은 변경 후보로 분류한다.
-- 관련 코드·명이 함께 일관되게 변경되면 이동 갱신하고, 그 밖의 변경은 자동 갱신하지 않는다.
+- 부서 코드·명칭·상위 부서 정보 변경은 이동 후보로 분류한다. 현재 구현은 자동 갱신하지 않고 `SILVER_EXISTING_CONFLICT`로 검토 큐에 보낸다.
+- 일관된 부서 이동 자동 갱신은 별도 기준 확정 후 구현할 대상이다.
 - 부모 부서가 추가·변경되면 조직 관계를 다시 검증한다. 계층 깊이는 2단계로 제한하지 않는다.
 
 Bronze 수집과 Silver 정규화·검증은 서로 다른 실행 책임이다. Bronze 검사가 끝난 원본만 Silver 검증이 읽으며,
@@ -73,6 +74,7 @@ Silver 검증 실패가 API 호출이나 Bronze 원본 저장을 수정하지 �
 | 같은 원본 재수신 | 중복 반영 없음 |
 | 형식 정규화가 끝난 레코드 | 도메인·중복 검증 진행 |
 | 도메인·중복 검증 통과 | Silver 저장 |
+| Silver 저장 검증 통과 + 선택 속성 경고 | Silver 저장 및 `QUALITY_WARNING` 이력 기록 |
 | 도메인·중복 검증 실패 | Review 보관, Silver 차단 |
 | 같은 업무 ID의 API 본문 데이터가 다름 | Review 보관, 자동 갱신 금지 |
 | 담당자 승인 후 수정값이 있는 레코드 | Bronze에서 재처리 후 통과 시 Silver 저장 |
@@ -82,7 +84,7 @@ Silver 검증 실패가 API 호출이나 Bronze 원본 저장을 수정하지 �
 
 | 테스트 | 기대 결과 |
 |---|---|
-| API 항목 수와 Bronze 저장 건수 비교 | 설명되지 않은 차이 0, 차이는 실행 실패로 기록 |
+| API 응답 데이터 건수와 Bronze 저장 건수 비교 | 설명되지 않은 차이 0, 차이는 실행 실패로 기록 |
 | Bronze 원본 필드·값·해시·`run_id` 확인 | 원본 변경·연결 누락 0건 |
 | 페이지 cursor 누락·반복 | 페이지 실패 처리, cursor 유지 |
 | API 본문 데이터 업무 필드 누락·추가 | Bronze 보존, 매핑 검토 큐(`MAPPING_PAYLOAD_SCHEMA_MISMATCH`) |
@@ -140,7 +142,7 @@ Silver 검증 실패가 API 호출이나 Bronze 원본 저장을 수정하지 �
 }
 ```
 
-상세 오류는 `hr_review_queue`에서 조회한다. Gold 지표는 해당 단계를 구현한 뒤 실행 보고서에 추가한다.
+상세 오류는 `hr_review_queue`에서 조회하고, Gold 지표도 같은 실행 보고서에 기록한다.
 
 검토 큐는 하나로 운영하고 `failure_stage`로 실패 단계를 구분한다.
 
@@ -148,6 +150,7 @@ Silver 검증 실패가 API 호출이나 Bronze 원본 저장을 수정하지 �
 |---|---|---|
 | `NORMALIZATION` | 매핑·ID·날짜 등 형식 표준화 실패 | Silver에 저장하지 않고 검토 큐 보관 |
 | `CANDIDATE_VALIDATION` | 메모리상의 정규화 결과에 대한 도메인·중복·조직 관계 검증 실패 | Silver에 저장하지 않고 검토 큐 보관 |
+| `QUALITY_WARNING` | Silver 저장은 가능하지만 선택 속성 충돌 등 품질 경고가 있는 건 | Silver 저장 및 경고 이력 기록 |
 | `UNKNOWN` | 기존 문서 등 단계 정보가 없음 | 원본 연결 후 확인 |
 
 ## 9. 완료 기준
@@ -174,9 +177,9 @@ py scripts\run_silver_once.py --limit <전체건수> --write
 테스트는 `N passed`로 종료되어야 한다. Silver 확인 명령은 `정제된 건수`와
 `정제되지 않은 건수`를 출력한다. `--all --write`는 사용하지 않는다.
 
-운영 스케줄러는 `scripts\run_pipeline_5m.ps1`을 실행할 수 있다. 실행 주기와 방법은
-운영 환경 확정 후 결정하며, 새 Bronze 건수만 `run_silver_once.py --latest N --write`로 처리한다.
-최초 전체 Silver 저장은 수동으로 실행한다.
+운영 스케줄러는 `scripts\run_pipeline_5m.ps1`로 5분마다 실행한다. 한 사이클에서
+Bronze 수집 후 미처리 Bronze를 Silver로 처리하고, Silver 성공 시 Gold를 부분 적재한다.
+최초 전체 Silver 저장은 수동으로 실행하고, 이후에도 남은 미처리 건수는 다음 5분 사이클에서 이어서 처리한다.
 
 ## 11. 검토 후 재처리
 
@@ -188,6 +191,18 @@ py scripts\run_silver_once.py --limit <전체건수> --write
 6. Bronze에서 정규화·도메인·중복·관계 검증을 재실행한다.
 7. 통과한 결과만 Silver에 재저장하고, 실패 데이터는 Review Queue에 유지한다.
 8. 검토자·결정·수정·재처리 결과를 이력으로 남긴다.
+
+검토 큐 재처리는 다음 기준을 추가로 확인한다.
+
+- 같은 `review_stage`와 `bronze_id`(없으면 `source_record_sha256`)가 `PENDING_REVIEW`로 이미 있으면 새 문서를 만들지 않고 마지막 확인 시각·실행 ID만 갱신한다.
+- 상태는 `PENDING_REVIEW → APPROVED` 또는 `PENDING_REVIEW → REJECTED`로 바꾸며, 승인된 건만 재처리한다.
+- 재처리마다 `reprocess_history`, 규칙 버전, 처리 시각과 결과를 추가한다. Bronze 원문은 변경하지 않는다.
+
+유일값 보완 검증도 포함한다.
+
+- 같은 `area_id`·`manager_id`에서 확인된 값이 하나일 때만 누락 필드를 보완한다.
+- 후보가 없거나 여러 값이면 임의로 채우지 않고 검토 큐로 보낸다.
+- 공백·대소문자·승인 별칭 차이만 같은 값으로 보고, 실제 충돌은 오류 또는 `QUALITY_WARNING`으로 기록한다.
 
 ## 12. Django·CSV 검증
 

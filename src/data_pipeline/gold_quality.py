@@ -45,10 +45,12 @@ def _is_declared_top_reference(
 
     parent_id = record.get("parent_area_id")
     top_id = record.get("top_area_id")
+    parent_key = _comparison_value(parent_id)
+    top_key = _comparison_value(top_id)
     return (
-        parent_id not in (None, "")
-        and parent_id == top_id
-        and parent_id not in area_ids
+        parent_key not in (None, "")
+        and parent_key == top_key
+        and parent_key not in area_ids
     )
 
 
@@ -109,7 +111,12 @@ def build_gold_quality_preview(database=None) -> dict[str, Any]:
     rules = load_gold_rules()
     domain_rules = load_domain_rules()
     records = list(db.hr_silver_standard_records.find({}, {"_id": 0}))
-    area_ids = {row.get("area_id") for row in records if row.get("area_id")}
+    # 조직 ID 비교는 Silver와 같은 기준(공백·대소문자 무시)을 사용한다.
+    area_ids = {
+        _comparison_value(row.get("area_id"))
+        for row in records
+        if row.get("area_id")
+    }
 
     bronze_to_area = {
         str(row["bronze_id"]): row.get("silver_key", {}).get("area_id")
@@ -133,10 +140,11 @@ def build_gold_quality_preview(database=None) -> dict[str, Any]:
         if review.get("blocks_silver", False):
             continue
         area_id = bronze_to_area.get(str(review.get("bronze_id")))
-        if not area_id:
+        area_key = _comparison_value(area_id)
+        if not area_key:
             continue
         for target in review.get("blocks_gold", []):
-            blocked[target].add(area_id)
+            blocked[target].add(area_key)
 
     table_rules = rules["tables"]
     failures: Counter[str] = Counter()
@@ -163,23 +171,26 @@ def build_gold_quality_preview(database=None) -> dict[str, Any]:
 
     for record in records:
         area_id = record.get("area_id")
+        area_key = _comparison_value(area_id)
         area_missing = _missing(record, table_rules["hr_area"]["required_fields"])
         if area_missing:
             failures["AREA_REQUIRED_FIELD_MISSING"] += 1
         else:
             parent_id = record.get("parent_area_id")
-            is_root = area_id == record.get("top_area_id")
+            parent_key = _comparison_value(parent_id)
+            top_key = _comparison_value(record.get("top_area_id"))
+            is_root = area_key == top_key
             declared_top_reference = _is_declared_top_reference(
                 record, area_ids, domain_rules
             )
             if declared_top_reference:
                 declared_top_reference_count += 1
             bad_child = not is_root and not declared_top_reference and (
-                not parent_id or parent_id == area_id or parent_id not in area_ids
+                not parent_key or parent_key == area_key or parent_key not in area_ids
             )
             if bad_child:
                 failures["INVALID_CHILD_PARENT"] += 1
-            elif area_id in blocked["*"] or area_id in blocked["hr_area"]:
+            elif area_key in blocked["*"] or area_key in blocked["hr_area"]:
                 failures["AREA_BLOCKED_BY_REVIEW"] += 1
             else:
                 area_candidates.add(area_id)
@@ -189,7 +200,7 @@ def build_gold_quality_preview(database=None) -> dict[str, Any]:
         )
         manager_id = record.get("manager_id")
         manager_blocked = (
-            area_id in blocked["*"] or area_id in blocked["hr_manager"]
+            area_key in blocked["*"] or area_key in blocked["hr_manager"]
         )
         if manager_missing:
             failures["MANAGER_REQUIRED_FIELD_MISSING"] += 1
@@ -208,8 +219,8 @@ def build_gold_quality_preview(database=None) -> dict[str, Any]:
             table_rules["hr_area_manager_assignment"]["required_fields"],
         )
         assignment_blocked = (
-            area_id in blocked["*"]
-            or area_id in blocked["hr_area_manager_assignment"]
+            area_key in blocked["*"]
+            or area_key in blocked["hr_area_manager_assignment"]
         )
         if assignment_missing:
             failures["ASSIGNMENT_REQUIRED_FIELD_MISSING"] += 1

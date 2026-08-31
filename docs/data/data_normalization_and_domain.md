@@ -10,10 +10,10 @@
 2. 응답 메타데이터의 선택 필드(`record_id`, `scheduled_release_at`)와 관계없이 API 본문 데이터의 15개 업무 필드를 메모리에서 정규화한다. 문서 호환상 `release_at` = `scheduled_release_at`으로 표기할 수 있지만, `release_at`은 API 응답이나 API 본문 데이터의 별도 필드로 저장·생성하지 않는다.
 3. API 레코드는 한 시점의 전체 상태를 담은 스냅샷으로 본다.
 4. ID·날짜·문자열·상태·NULL을 정규화한 결과에 도메인·중복·조직 관계 검증을 수행한다.
-5. 검증을 통과한 결과만 Silver에 저장한다.
-6. 오류나 판단 불가 값이 있으면 레코드 전체를 검토 대상으로 보낸다.
+5. Silver 저장 검증을 통과한 결과(`PASS` 또는 `PASS_WITH_WARNING`)를 Silver에 저장한다.
+6. 필수값·필수 관계의 오류나 판단 불가 값은 레코드 전체를 검토 대상으로 보낸다. 선택 속성의 충돌은 해당 필드만 NULL로 처리하고 `QUALITY_WARNING`을 기록할 수 있다.
 7. 서로 다른 배치의 필드를 섞어 새로운 값을 만들지 않는다.
-8. Bronze는 수정하지 않으며, 도메인 검증을 통과한 결과만 Silver와 Gold에 반영한다.
+8. Bronze는 수정하지 않는다. Silver는 저장 가능한 PASS/PASS_WITH_WARNING 결과만 반영하고, Gold는 별도 품질 게이트를 통과한 결과만 반영한다.
 9. Bronze 저장 후 항목 수·페이지·cursor·원본 값·해시·`run_id`를 확인한 뒤 정규화를 시작한다.
 10. API 수집 소스는 Bronze까지만 처리하고, Silver 정규화·검증 소스는 Bronze를 읽어 별도로 실행한다.
 
@@ -103,13 +103,13 @@ API 호출 → 계약 검사 → 응답 메타데이터·본문 데이터 전체
 
 ### 5.2 조직 레벨
 
-조직 레벨은 다음 별칭을 모두 표준값 `TOP_LEVEL`로 변환한다.
+조직 레벨은 다음 별칭을 모두 표준값 `TOP`으로 변환한다.
 
 ```text
-TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
+TOP, TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP
 ```
 
-현재 허용 목록은 `TOP_LEVEL` 하나다. `UNKNOWN` 등 목록에 없는 값은
+현재 허용 목록은 `TOP` 하나다. `UNKNOWN` 등 목록에 없는 값은
 `UNREGISTERED_ORGANIZATION_LEVEL`로 검토 큐에 보낸다.
 
 ### 5.3 필드별 특수값
@@ -129,7 +129,8 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 - 두 관계는 모두 보존하며 조직 계층은 2단계로 고정하지 않는다. 부모 부서가 추가·변경되면 관계를 다시 검증한다.
 - 최상위 부서는 부모 부서가 없거나 자기 자신을 부모로 지정해도 정상이다.
 - 하위 부서는 존재하는 다른 부서를 부모로 지정해야 한다. 부모가 없거나 자기 자신을 지정하거나 부서 연결이 순환하면 검토 큐로 보낸다.
-- 같은 `area_id`의 부서명·상위 부서 정보 변경 또는 `area_id` 변경은 변경 후보로 분류한다. 관련 코드와 명칭이 함께 일관되게 바뀌면 이동으로 갱신하고, 근거가 부족하면 검토 큐에 보관한다.
+- 같은 `area_id`의 부서명·상위 부서 정보 변경 또는 `area_id` 변경은 변경 후보로 분류한다. 현재 구현은 자동 갱신하지 않고 `SILVER_EXISTING_CONFLICT`로 검토 큐에 보관한다.
+- 일관된 부서 이동을 자동 갱신하는 정책은 기준 확정 후 별도 구현 대상으로 남긴다.
 
 ## 6. 같은 ID가 새 배치로 들어오는 경우
 
@@ -155,17 +156,25 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 | `NORMALIZATION_COLLISION` | 어느 값이 맞는지 판단할 수 없는 속성 충돌 | 검토 |
 | `AREA_MANAGER_CONFLICT` | 한 조직에 현재 담당자가 둘 이상 | 검토 |
 
+### 7.1 유일값 보완과 선택 필드 충돌
+
+- 같은 `area_id`의 현재 배치와 승인된 Silver에서 `area_name`, `top_area_id`, `top_area_name`, `top_area_level` 값이 하나로만 확인되면 누락값에만 그 값을 채운다.
+- 같은 `manager_id`에서 `manager_name`, `manager_active_yn`, `position_name` 값이 하나로만 확인되면 누락값에만 그 값을 채운다. 여러 값이 있거나 후보가 없으면 임의로 선택하지 않는다.
+- 보완한 필드는 처리 결과에 `auto_completed_fields`로 남기고, 서로 다른 배치의 값을 섞어 새 레코드를 만들지 않는다.
+- 공백·대소문자·승인된 별칭 차이만 같은 값으로 본다. 실제 값이 여러 개로 충돌하면 검토 큐에 보관한다.
+- 관리자 식별자·이름·재직 상태 같은 필수값 충돌은 Silver 저장을 막고, 직급·입사일 등 선택 속성 충돌은 해당 필드만 NULL로 두고 `QUALITY_WARNING`으로 기록할 수 있다.
+
 ## 8. 상태와 검토
 
 | 상태 | 의미 | Silver·Gold |
 |---|---|---|
 | `PASS` | 필수 규칙 통과 | 반영 가능 |
-| `WARNING` | 사용 가능하지만 기록 필요 | 반영 가능 |
+| `WARNING` | 사용 가능하지만 기록 필요 | Silver 저장 및 `QUALITY_WARNING` 이력 |
 | `REVIEW_REQUIRED` | 업무 판단 필요 | 반영 금지 |
 | `ERROR` | 자동 처리 불가 | 반영 금지 |
 | `REJECTED` | 이번 실행에서 제외 | 원본만 보존 |
 
-`REVIEW_REQUIRED` 또는 `ERROR`가 하나라도 있으면 레코드 전체를 `hr_review_queue`에 보관한다. 오류 코드와 실패 단계를 함께 기록한다. 검토 결과와 Silver·Gold 연결은 후속 계보 연동 단계에서 `hr_lineage_links`에 기록한다.
+`REVIEW_REQUIRED` 또는 `ERROR`가 하나라도 있으면 레코드 전체를 `hr_review_queue`에 보관한다. 오류 코드와 실패 단계를 함께 기록한다. Silver 저장 시 Bronze–Silver 연결을 `hr_lineage_links`에 기록하고, Gold 적재가 성공하면 `load_batch_id`와 Gold 키를 같은 링크에 추가한다.
 검토 큐에는 실패 단계도 `failure_stage`로 기록한다.
 
 ### 8.1 정규화·검증 상태
@@ -187,7 +196,7 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 | `QUALITY_WARNING` | Silver 저장은 가능하지만 품질 경고를 남긴 건 | Silver 저장, 경고 이력 기록 |
 | `UNKNOWN` | 이전 문서 등 단계 정보가 없는 검토 건 | 원본 연결 후 확인 |
 
-두 유형 모두 `bronze_id`, 오류 코드와 함께 저장한다. Bronze 원본은 삭제하지 않으며,
+모든 검토 문서는 `bronze_id`, 오류 코드와 함께 저장한다. Bronze 원본은 삭제하지 않으며,
 재처리는 Bronze에서 다시 시작한다.
 
 ## 9. YAML과 Python의 역할
@@ -219,6 +228,14 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 
 값 목록이나 날짜 형식 추가는 YAML만 수정하고, 새로운 알고리즘이 필요할 때만 Python 모듈과 테스트를 추가한다.
 
+### 9.2 검토 큐 중복 방지와 상태
+
+- 검토 식별 키는 `review_stage:bronze_id`로 만든다. `bronze_id`가 없으면 `source_record_sha256`를 사용한다.
+- `hr_review_queue`에는 `(review_dedup_key, review_status)` 유일 인덱스를 적용한다. 같은 원문·단계가 다시 감지되면 기존 `PENDING_REVIEW` 문서를 갱신하고 새 대기 문서를 만들지 않는다.
+- 상태는 `PENDING_REVIEW → APPROVED` 또는 `PENDING_REVIEW → REJECTED`로 변경한다. 승인된 건만 Bronze 원문에서 재처리한다.
+- 재처리할 때마다 `reprocess_history`, 규칙 버전, 처리 시각과 결과(`SILVER_SAVED`, `FAILED` 등)를 추가한다. Bronze 원문은 변경하지 않는다.
+- 승인·반려가 끝난 뒤 같은 원문에서 새 오류가 발견되면 새 `PENDING_REVIEW`를 만들 수 있다. 이때도 단계별 중복 키를 다시 확인한다.
+
 ## 10. 완료 기준
 
 - 논리 원본 목록 17개 중 필수 API 본문 데이터 15개와 선택 응답 메타데이터의 처리 방식이 일관된다.
@@ -244,5 +261,6 @@ TOP_LEVEL, TOP LEVEL, top_level, 최상위, 1, L1 → TOP_LEVEL
 
 - Silver 저장은 정규화·도메인·중복·조직 관계 검증 결과로 결정한다.
 - Gold는 Silver의 표준 필드를 다시 원본처럼 정제하지 않는다.
+- Gold는 `hr_area`, `hr_manager`, `hr_area_manager_assignment`, `area_manager_features`를 생성한다.
 - Gold의 organization_type은 area_id와 top_area_id의 관계로 TOP 또는 SUB를 계산한다.
 - Gold 전용 PK·FK·필수값 오류는 Gold 품질 보고서와 적재 이력에 남기고, Bronze 원문은 유지한다.

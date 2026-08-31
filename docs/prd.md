@@ -115,7 +115,8 @@ top_area_registered_at
 - 날짜 형식을 표준 시간 형식으로 변환한다.
 - 상태와 조직 레벨 값을 정해진 값으로 변환한다.
 - YAML 규칙을 읽어 정규화한다.
-- 정상 데이터만 Silver에 저장한다.
+- Silver 저장 검증을 통과한 데이터(`PASS` 또는 `PASS_WITH_WARNING`)를 Silver에 저장한다.
+- 필수값 누락·필수 관계 오류·실제 값 충돌은 Silver에 저장하지 않고 `hr_review_queue`에 보관한다.
 
 ### 3.4 오류·검토 데이터
 
@@ -145,11 +146,13 @@ MongoDB 컬렉션 `hr_review_queue`에 다음 데이터를 저장한다.
 - `parent_area_id`와 `top_area_id`는 서로 다른 관계로 보존하며, 조직 계층은 2단계 이상으로 확장할 수 있어야 한다.
 - 최상위 부서는 부모 부서가 없거나 자기 자신을 부모로 지정해도 정상으로 처리한다.
 - 하위 부서는 존재하는 다른 부서를 부모로 지정해야 한다.
-- 부서 코드·명칭·상위 부서 정보가 함께 일관되게 변경되면 부서 이동으로 보고 갱신한다.
-- 변경 근거가 부족하거나 하위 부서의 부모가 없거나, 자기 자신을 부모로 지정하거나, 부서 간 연결이 순환하면 검토 큐로 보낸다.
+- 부서 코드·명칭·상위 부서 정보 변경은 부서 이동 후보로 분류한다.
+- 현재 구현은 변경 데이터를 자동 갱신하지 않고 `SILVER_EXISTING_CONFLICT`로 검토 큐에 보낸다.
+- 하위 부서의 부모가 없거나, 자기 자신을 부모로 지정하거나, 부서 간 연결이 순환하면 검토 큐로 보낸다.
+- 일관된 부서 이동을 자동 갱신하는 정책은 별도 기준 확정 후 구현할 대상이다.
 
 세부 판정 규칙과 예외 처리는
-[data_normalization_and_domain.md](<../data_normalization_and_domain.md>)를 참조한다.
+[data_normalization_and_domain.md](./data/data_normalization_and_domain.md)를 참조한다.
 
 ### 3.6 Gold와 대시보드
 
@@ -185,7 +188,12 @@ Bronze는 API 응답 메타데이터와 원본 17개 필드를 함께 보존하�
 
 ## 5. 스케줄러와 실행 방식
 
-운영 환경과 실행 주기, 실행 방법은 구현·운영 환경을 확정한 뒤 결정한다.
+`run_pipeline_5m.ps1`을 5분 주기로 실행한다. 한 주기에서 Bronze 수집·원문 무결성
+검사 후 Silver 미처리 데이터를 1,000건 단위로 모두 처리하고, Silver가 성공하면
+Gold를 부분 적재한다. Bronze가 실패해도 이미 저장된 원문은 Silver에서 계속
+처리한다. Gold에서 제외된 행은 검토 이력과 품질 보고서에 남긴다.
+
+스크립트는 `once`, `start`, `status`, `stop` 모드를 제공한다.
 
 ## 6. 실행 이력과 로그
 
@@ -197,10 +205,12 @@ Bronze는 API 응답 메타데이터와 원본 17개 필드를 함께 보존하�
 - 지연 시간
 - 응답 해시
 - 처리 행 수
-- `next_cursor`
+- 요청 cursor 해시
+- 다음 cursor 해시
 - `next_refresh_at`
 
 API 키와 HTTP 응답 본문은 실행 이력에 저장하지 않는다. 원본 데이터 확인이 필요하면 Bronze 원문을 참조한다.
+Gold 적재가 완료되면 `hr_lineage_links`에 `load_batch_id`와 테이블별 Gold 키를 연결한다.
 
 ## 7. 품질 기준
 
@@ -221,10 +231,14 @@ API 키와 HTTP 응답 본문은 실행 이력에 저장하지 않는다. 원본
 
 ## 9. Gold 테이블과 기준 시점
 
-- Gold 업무 테이블은 `hr_area`, `hr_manager`, `hr_area_manager_assignment`를 사용한다.
-- `stg_hr_standard_records`는 Gold 적재 전 검증용으로 사용한다.
-- `hr_gold_load_batch`는 Gold 적재 이력을 저장한다.
-- Gold 기준 시점은 부서 등록일시가 아니라 `hr_pipeline_runs`의 실행 시각으로 관리한다.
+- Gold 업무 테이블은 `hr_area`, `hr_manager`, `hr_area_manager_assignment`,
+  `area_manager_features`를 사용한다.
+- Gold 적재 전 품질 게이트는 메모리에서 수행하며, 별도
+  `stg_hr_standard_records` 테이블은 사용하지 않는다.
+- `hr_gold_load_batch`는 Gold 적재 이력과 `source_silver_count`, `loaded_count`,
+  `skipped_count`, `started_at`, `finished_at`, `report_json`을 저장한다.
+- `loaded_count`는 해당 배치에서 적재한 행 수이며 Gold 전체 테이블 행 수가 아니다.
+- Gold 기준 시점은 부서 등록일시가 아니라 `hr_gold_load_batch.started_at`(적재 실행 시각)으로 관리한다.
 - `run_id`로 Gold 적재 이력과 해당 수집 실행을 연결한다.
 
 ## 10. 구현 순서

@@ -40,7 +40,10 @@ class AreaRepository:
             conditions.append("a.top_area_id = %s")
             params.append(top_area_id)
         if organization_type:
-            conditions.append("a.top_area_level = %s")
+            conditions.append(
+                "(CASE WHEN a.area_id = a.top_area_id "
+                "THEN 'TOP' ELSE 'SUB' END) = %s"
+            )
             params.append(organization_type)
         if active in {"Y", "N"}:
             conditions.append("m.manager_active_yn = %s")
@@ -59,6 +62,8 @@ class AreaRepository:
                 a.top_area_id,
                 a.top_area_name,
                 a.top_area_level,
+                CASE WHEN a.area_id = a.top_area_id
+                     THEN 'TOP' ELSE 'SUB' END AS organization_type,
                 a.registered_at AS area_registered_at,
                 m.manager_id,
                 m.manager_name,
@@ -119,7 +124,10 @@ class AreaRepository:
             SELECT
                 a.area_id, a.area_name, a.parent_area_id,
                 a.parent_area_name, a.top_area_id, a.top_area_name,
-                a.top_area_level, m.manager_id, m.manager_name,
+                a.top_area_level,
+                CASE WHEN a.area_id = a.top_area_id
+                     THEN 'TOP' ELSE 'SUB' END AS organization_type,
+                m.manager_id, m.manager_name,
                 m.manager_active_yn
             {self._FROM} {where}
             ORDER BY a.top_area_id, a.parent_area_id, a.area_id

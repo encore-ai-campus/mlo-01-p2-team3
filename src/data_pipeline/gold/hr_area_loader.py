@@ -54,7 +54,7 @@ def _id_key(value: Any) -> str | None:
 
 
 def build_hr_area_rows(records: Iterable[Mapping[str, Any]]) -> list[tuple[Any, ...]]:
-    """조직 ID별 한 행을 만들고 최상위 조직의 부모는 NULL로 만든다."""
+    """조직 ID별 한 행을 만들고 API 표준 레벨을 그대로 보존한다."""
 
     rows: dict[Any, tuple[Any, ...]] = {}
     for record in records:
@@ -68,9 +68,9 @@ def build_hr_area_rows(records: Iterable[Mapping[str, Any]]) -> list[tuple[Any, 
         if is_root:
             parent_id = None
             parent_name = None
-        # 원본 top_area_level 값이 잘못되어도 Gold에서는 ID 관계로
-        # 조직 유형을 다시 계산한다. 원본 값은 Bronze/Silver에 보존된다.
-        organization_level = "TOP" if is_root else "SUB"
+        # top_area_level은 Silver에서 표준화한 API 값이다. Gold의 조직
+        # 구분(TOP/SUB)은 화면·피처에서 ID 관계로 별도 계산한다.
+        top_area_level = _required(record, "top_area_level")
         row = (
             area_id,
             _required(record, "area_name"),
@@ -78,7 +78,7 @@ def build_hr_area_rows(records: Iterable[Mapping[str, Any]]) -> list[tuple[Any, 
             parent_name,
             top_area_id,
             _required(record, "top_area_name"),
-            organization_level,
+            top_area_level,
             _mysql_datetime(_nullable(record.get("area_registered_at"))),
         )
         previous = rows.get(area_id)

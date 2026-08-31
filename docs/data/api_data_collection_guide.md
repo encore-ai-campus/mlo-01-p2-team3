@@ -11,7 +11,7 @@
 |---|---|
 | 제공처 | `legacy_hr_api` |
 | 방식 | 내부 HTTP(S) API 호출 |
-| 주기 | 운영 환경 확정 후 결정 |
+| 주기 | `scripts/run_pipeline_5m.ps1` 기준 5분마다 |
 | 응답 | JSON 객체 또는 배열 |
 | 필드 | 논리 목록 17개(필수 API 본문 데이터 15개 + 선택 응답 메타데이터 2개) |
 | 페이지 | 페이지 번호 또는 커서 |
@@ -19,6 +19,18 @@
 | 저장 | API → Bronze (이후 정규화·검증 → Silver → Gold) |
 
 인증정보·API 주소·호출 한도는 환경 설정과 비밀 저장소에서 관리한다.
+
+### 2.1 사용하는 API 경로
+
+| 경로 | 인증 | 용도 |
+|---|---|---|
+| `GET /public/v1/key` | 없음 | 당일 API 키 조회 |
+| `GET /api/v1/meta` | `X-API-Key` | 공개 행 수·다음 공개 시각·컬럼 확인 |
+| `GET /api/v1/records` | `X-API-Key` | cursor 기반 증분 수집(`limit=1000`) |
+| `GET /api/v1/records/{id}` | `X-API-Key` | 공개된 단일 레코드 조회 |
+| `GET /health/ready` | 없음 | MySQL·데이터셋 준비 상태 확인 |
+
+실행 시 API 주소와 키는 환경변수로 주입하며 문서나 로그에 키를 고정하지 않는다.
 
 ## 3. 원본 필드
 
@@ -53,7 +65,7 @@ top_area_reg_dtm
 ```
 
 이 문서의 수집 범위는 Bronze까지다. Bronze 저장 후 별도 단계에서 API 본문 데이터의 15개
-업무 필드를 정규화하고, 도메인·중복·관계 검증을 통과한 데이터만 Silver로 보낸다.
+업무 필드를 정규화하고, Silver 저장 검증을 통과한 데이터(`PASS` 또는 `PASS_WITH_WARNING`)를 Silver로 보낸다.
 
 ### Bronze 무결성 확인
 
@@ -103,9 +115,9 @@ Bronze에 보존하는 API 응답 메타데이터·`run_id`와, 파이프라인 
 | 배치 ID(`run_id`) | Bronze 원본 문서 최상위 및 `hr_pipeline_runs` |
 | 실행 시각, 상태, 증분 구간 | `hr_pipeline_runs` |
 | 현재 cursor, `next_refresh_at` | `hr_pipeline_control` |
-| 페이지 순서, cursor, next_cursor, 응답 해시 | `hr_pipeline_pages` |
+| 페이지 순서, cursor 해시, next_cursor 해시, 응답 해시 | `hr_pipeline_pages` |
 | 오류·검토 상태 | `hr_review_queue` |
-| Bronze–Silver–Gold 연결과 검토·반영 근거(후속 연동 단계) | `hr_lineage_links` |
+| Bronze–Silver–Gold 연결과 검토·반영 근거(`load_batch_id`, Gold 키 포함) | `hr_lineage_links` |
 
 페이지 실행 이력에는 HTTP 상태, 요청 시각, 응답 시각, 지연 시간, 응답 해시와 오류 코드를 저장한다.
 응답 본문과 API 키는 파일 로그나 페이지 이력에 저장하지 않는다.
@@ -138,4 +150,5 @@ data/
 - 원문 파일과 MongoDB Bronze 문서는 덮어쓰지 않는다.
 - pipeline.log와 hr_pipeline_pages에는 실행 요약·HTTP 상태·시각·지연 시간·응답 해시만 남긴다.
 - API 키와 응답 본문은 실행 로그·페이지 이력에 기록하지 않는다. 응답 본문은 원문 보관 위치에서만 확인한다.
-- 원문 파일·manifest 누락 검사는 verify_bronze_archive.py로 수행하고, 결과를 reports/bronze_archive에 저장한다.
+- 원문 파일·manifest 누락 검사는 `verify_bronze_archive.py`로 수행하고, 결과를 `reports/bronze_archive`에 저장한다.
+- 스케줄러는 새로 받은 `run_id`를 자동 검사한다. 과거 모든 run을 한 번에 검사하는 정기 작업은 별도로 구현하지 않았으며, 필요할 때 `--run-id` 없이 수동 실행한다.

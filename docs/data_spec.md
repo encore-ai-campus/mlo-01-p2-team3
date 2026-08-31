@@ -38,6 +38,9 @@ API가 함께 보내는 `source_row_no`, `source_record_sha256`, `release_slot` 
 
 ### 3.1 Bronze 원문 저장 형태
 
+아래 예시의 `payload`는 API 응답에서 본문 데이터를 담는 실제 키 이름이다. 문서 설명에서는
+이 부분을 쉽게 “본문 데이터”라고 부르지만, 원문 JSON의 키 이름은 바꾸지 않는다.
+
 ```json
 {
   "run_id": "<배치 ID>",
@@ -58,7 +61,8 @@ API가 함께 보내는 `source_row_no`, `source_record_sha256`, `release_slot` 
 
 Bronze는 `record_id` 유무와 관계없이 저장 가능한 원본 문서 전체를 변경 없이 저장한다. `record_id`가 없으면 MongoDB 내부 식별자
 (`_id`, 문서에서는 `bronze_id`로 참조)로 추적하며 원문에 `record_id`를 만들어 넣지 않는다. 이후 API 본문 데이터를 읽어 15개 표준 필드로 정규화하고,
-도메인·중복·조직 관계 검증을 적용한다. 검증을 통과한 데이터만 Silver에 저장한다.
+도메인·중복·조직 관계 검증을 적용한다. Silver 저장 검증을 통과한 데이터(`PASS` 또는
+`PASS_WITH_WARNING`)를 Silver에 저장하고, 차단 데이터는 검토 큐에 보관한다.
 
 API 본문 데이터는 매핑 단계에서 업무 필드 15개가 정확히 있는지 확인한다. 필드 누락·추가 또는 값이
 문자열/NULL이 아니면 `MAPPING_PAYLOAD_SCHEMA_MISMATCH` 또는 `MAPPING_PAYLOAD_TYPE_INVALID`로
@@ -84,7 +88,7 @@ API 본문 데이터는 매핑 단계에서 업무 필드 15개가 정확히 있
 - 두 관계는 모두 보존하며 조직 계층은 2단계로 고정하지 않는다. 부모 부서가 추가·변경되면 관계를 다시 검증한다.
 - 최상위 부서는 부모 부서가 없거나 자기 자신을 부모로 지정해도 정상이다.
 - 하위 부서는 존재하는 다른 부서를 부모로 지정해야 한다. 부모가 없거나 자기 자신을 지정하거나 부서 연결이 순환하면 검토 큐로 보낸다.
-- 같은 `area_id`의 부서명·상위 부서 정보 변경 또는 `area_id` 변경은 변경 후보로 분류한다. 관련 코드와 명칭이 함께 일관되게 바뀌면 이동으로 갱신하고, 근거가 부족하면 검토 큐에 보관한다.
+- 같은 `area_id`의 부서명·상위 부서 정보 변경 또는 `area_id` 변경은 변경 후보로 분류한다. 현재 구현은 자동 갱신하지 않고 `SILVER_EXISTING_CONFLICT`로 검토 큐에 보관한다.
 
 ### 3.4 검토 큐 실패 단계
 
@@ -100,6 +104,14 @@ API 본문 데이터는 매핑 단계에서 업무 필드 15개가 정확히 있
 모든 검토 문서는 `bronze_id`와 오류 코드로 원본을 추적한다. Bronze 원본은 삭제하지
 않으며, 승인 후에도 Bronze에서 정규화·검증을 다시 수행한다.
 
+### 3.5 누락값 보완과 검토 큐 중복 방지
+
+- 같은 `area_id` 또는 `manager_id`에서 하나로 확인되는 값만 누락 필드에 보완한다. 후보가 없거나 여러 값이면 임의로 선택하지 않는다.
+- 공백·대소문자·승인된 별칭 차이만 같은 값으로 보고, 실제 값 충돌은 검토 대상으로 남긴다.
+- 검토 식별 키는 `review_stage:bronze_id`이며 `bronze_id`가 없으면 `source_record_sha256`를 사용한다.
+- 같은 키의 `PENDING_REVIEW` 문서는 upsert해 중복을 막는다. 상태는 `PENDING_REVIEW → APPROVED/REJECTED`로 변경하고, 승인 건만 Bronze에서 재처리한다.
+- 재처리 결과·규칙 버전·처리 시각은 `reprocess_history`에 추가하며 Bronze 원문은 바꾸지 않는다.
+
 ## 4. 문서별 책임
 
 | 문서 | 담당 내용 |
@@ -113,6 +125,8 @@ API 본문 데이터는 매핑 단계에서 업무 필드 15개가 정확히 있
 | [ERD](./erd.md) | 컬렉션·테이블·키 |
 | [품질 진단](./quality/data_quality_assessment.md) | 초기 품질과 지표 |
 | [검증 계획](./quality/data_validation_plan.md) | 테스트·검증·재처리 |
+| [실행 매뉴얼](./operations_runbook.md) | 로컬 실행·스케줄러·재처리 명령 |
+| [스케줄러 매뉴얼](./scheduler_run_manual.md) | 5분 실행·상태 확인·중지 |
 
 ## 5. 공통 처리 흐름
 
@@ -124,7 +138,7 @@ API → 계약 검사 → Bronze → 메모리 매핑·정규화 → 도메인·
 
 ### 5.1 Bronze 원본 무결성 및 책임 분리
 
-Bronze 저장 직후 API 항목 수와 저장 건수, 페이지·cursor 누락·반복, 원본 필드명·값, 원본 해시와 `run_id` 연결을 확인한다.
+Bronze 저장 직후 API 응답 데이터 건수와 저장 건수, 페이지·cursor 누락·반복, 원본 필드명·값, 원본 해시와 `run_id` 연결을 확인한다.
 설명되지 않은 차이는 실행 또는 페이지 실패로 기록하고 원본은 보존한다. 무결성 확인이 끝나기 전에는 Silver 처리를 시작하지 않는다.
 
 API 수집 소스는 API 호출·페이지 기록·Bronze 저장까지만 담당한다. 정규화·도메인·중복·조직 관계 검증은 별도 Silver 실행이
@@ -161,13 +175,28 @@ API 원본 문서에 포함된 응답 메타데이터와 파이프라인이 발�
 
 - `run_id`, 실행 시각, 증분 구간 → Bronze 최상위 및 `hr_pipeline_runs`
 - 현재 `cursor`, `next_refresh_at` → `hr_pipeline_control`
-- 페이지 순서·요청/응답 정보·응답 해시 → `hr_pipeline_pages`
+- 페이지 순서·요청/다음 cursor 해시·요청/응답 정보·응답 해시 → `hr_pipeline_pages`
 - 규칙 버전과 실행 처리 건수 → `hr_pipeline_runs`
 - 실행 결과 JSON 요약 → 실행 로그(stdout)
 - 오류·검토·승인 상태 → `hr_review_queue`
 - Bronze–Silver–Gold 계보와 검토·반영 근거 → `hr_lineage_links`
 
-`hr_lineage_links` 저장소는 준비되어 있으며 Silver·Gold 연동 단계에서 자동 기록한다.
+`hr_lineage_links`는 Silver 저장 시 Bronze–Silver 연결을 기록하고, Gold 적재가
+끝나면 이번 Silver 원본의 `bronze_id`를 우선 찾아 `load_batch_id`와 테이블별
+`gold_key`를 같은 링크에 추가한다. 원본 ID가 없는 구형 링크만 `silver_key`로
+호환 갱신한다.
+
+`hr_gold_load_batch`에는 `started_at`, `finished_at`, `source_silver_count`,
+`loaded_count`, `skipped_count`, `report_json`을 저장한다. `loaded_count`는
+현재 Gold 전체 행 수가 아니라 해당 실행에서 처리한 네 테이블의 합계다.
+
+새 실행부터 위 이력·해시·계보 필드가 기록된다. 기존 `hr_pipeline_pages` 문서에
+남아 있는 원본 cursor 필드와 기존 Silver 계보의 Gold 필드는 자동으로 소급 변경하지
+않으며, 기존 데이터까지 기준을 맞출 때는 별도 점검·백필 작업을 수행한다.
+
+Gold 업무 테이블은 `hr_area`, `hr_manager`, `hr_area_manager_assignment`,
+`area_manager_features` 네 개이며, 마지막 테이블은 조직·담당자 관계에서
+계산한 `organization_type`과 `has_parent`를 제공한다.
 
 ## 9. 변경 원칙
 
@@ -194,6 +223,7 @@ Django는 MySQL Gold만 조회한다. Bronze 원문이나 Silver 문서를 화�
 
 - 검색 조건이 있으면 검색 결과를 내려받고, ?all=1이면 검색 조건과 페이지 제한 없이 전체 Gold 데이터를 내려받는다.
 - CSV에서는 조직코드와 조직명, 담당자코드와 담당자명을 서로 다른 열로 제공한다.
+- CSV의 `조직구분`은 `area_id`와 `top_area_id` 관계로 계산한 Gold `organization_type`을 사용한다.
 - 날짜는 화면과 CSV에서 초 단위까지만 표시한다.
 - 이름의 앞뒤 공백과 승인된 반복 단어 제거는 화면 표시용이다. Silver·Gold에 저장된 원본 표준값은 변경하지 않는다.
 - 화면 표시 정리로 원본 레코드 수나 키 값이 합쳐지지 않는다.
