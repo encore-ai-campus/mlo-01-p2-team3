@@ -82,10 +82,10 @@ API JSON → MongoDB Bronze → MongoDB Silver → MySQL Gold → Django 대시�
 
 | 단계 | 작업 항목 | 담당자 |
 |---|---|---|
-| 1 | API 계약 확인 및 Bronze 수집 구현 | 미정 |
-| 2 | Silver 표준화·정규화·검증 구현 | 미정 |
-| 3 | Gold 적재 및 Django 대시보드 구현 | 미정 |
-| 4 | 테스트·리포트·README 정리 | 미정 |
+| 1 | API 계약 확인 및 Bronze 수집 구현 | 이재원|
+| 2 | Silver 표준화·정규화·검증 구현 | 김민서,김영주 |
+| 3 | Gold 적재 및 Django 대시보드 구현 | 조성현,이재원,김영주|
+| 4 | 테스트·리포트·README 정리 | 김영주,조성현,김민서 |
 
 세부 요구사항은 [BRD](./docs/brd.md), [PRD](./docs/prd.md), [프로젝트 체크리스트](./project_checklist.md)를 따른다.
 
@@ -118,7 +118,7 @@ MongoDB Bronze·Silver와 MySQL Gold의 상세 컬렉션·테이블 구조는 [E
 
 | 이름 | 회고 |
 |---|---|
-| 김영주 | 작성 예정 |
+| 김영주 | 올바른 구조 설계 및 기획의 중요성을 다시금 깨달았다|
 | 김민서 | 작성 예정 |
 | 이재원 | 작성 예정 |
 | 조성현 | 작성 예정 |
