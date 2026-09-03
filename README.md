@@ -83,7 +83,7 @@ API JSON → MongoDB Bronze → MongoDB Silver → MySQL Gold → Django 대시�
 | 단계 | 작업 항목 | 담당자 |
 |---|---|---|
 | 1 | API 계약 확인 및 Bronze 수집 구현 | 이재원|
-| 2 | Silver 표준화·정규화·검증 구현 | 김민서,김영주 |
+| 2 | Silver 표준화·정규화·검증 구현 | 김영주,김민서 |
 | 3 | Gold 적재 및 Django 대시보드 구현 | 조성현,이재원,김영주|
 | 4 | 테스트·리포트·README 정리 | 김영주,조성현,김민서 |
 
